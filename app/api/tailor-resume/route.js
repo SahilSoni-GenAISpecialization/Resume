@@ -38,7 +38,7 @@ export async function POST(request) {
     const count = usageRow?.tailor_count || 0;
     const isPro = usageRow?.is_pro || false;
 
-    if (!isPro && count >= 5) {
+    if (!isPro && count >= 999) {
       return NextResponse.json(
         { error: 'FREE_LIMIT_REACHED', count },
         { status: 403 }

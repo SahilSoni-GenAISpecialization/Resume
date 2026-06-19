@@ -8,13 +8,23 @@ export default function SearchPage() {
 
   const [profile, setProfile] = useState(null);
   const [activeTab, setActiveTab] = useState('search');
+  const [tailorAction, setTailorAction] = useState(null);
 
   const [jobTitle, setJobTitle] = useState('');
   const [company, setCompany] = useState('');
   const [jobDescription, setJobDescription] = useState('');
+  const [applyUrl, setApplyUrl] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLocation, setSearchLocation] = useState('');
+  const [searchCompany, setSearchCompany] = useState('');
+  const [datePosted, setDatePosted] = useState('');
+  const [jobType, setJobType] = useState('');
+  const [remoteType, setRemoteType] = useState('');
+  const [experienceLevel, setExperienceLevel] = useState('');
+  const [sortBy, setSortBy] = useState('relevance');
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -29,6 +39,9 @@ export default function SearchPage() {
   const [tailorError, setTailorError] = useState('');
   const [activeResultTab, setActiveResultTab] = useState('resume');
   const [copied, setCopied] = useState(false);
+
+  const [downloadMenu, setDownloadMenu] = useState({ open: false, type: null });
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -64,11 +77,19 @@ export default function SearchPage() {
       const res = await fetch('/api/search-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchQuery, location: searchLocation }),
+        body: JSON.stringify({
+          query: searchQuery,
+          location: searchLocation,
+          company: searchCompany,
+          datePosted,
+          jobType,
+          remoteType,
+          experienceLevel,
+          sortBy,
+        }),
       });
 
       const json = await res.json();
-
       if (!res.ok) throw new Error(json.error || 'Search failed');
 
       setSearchResults(json.jobs || []);
@@ -108,30 +129,46 @@ export default function SearchPage() {
     }
   }
 
-  async function handleTailor(source = 'selected') {
-    const jd =
-      source === 'paste'
-        ? jobDescription
-        : jobDetails?.description || selectedJob?.descriptionPreview || '';
+  function getApplyUrl(job) {
+    return (
+      job?.url ||
+      job?.jobUrl ||
+      job?.applyUrl ||
+      job?.job_apply_link ||
+      job?.applicationUrl ||
+      ''
+    );
+  }
 
-    const title = source === 'paste' ? jobTitle : jobDetails?.title || selectedJob?.title || '';
-    const comp = source === 'paste' ? company : jobDetails?.company || selectedJob?.company || '';
-
-    if (!jd?.trim() || jd.trim().length < 120) {
-      setTailorError('Please use a full job description before tailoring.');
-      return;
-    }
-
-    if (!profile || (!profile.experience && !profile.skills && !profile.education)) {
-      setTailorError('Please fill and save your profile first before tailoring.');
-      return;
-    }
-
-    setIsTailoring(true);
+  async function handleTailor(source = 'selected', mode = 'resume') {
     setTailorError('');
     setTailorResult(null);
+    setIsTailoring(true);
+    setTailorAction(mode);
 
     try {
+      let jd = '';
+      let title = '';
+      let comp = '';
+      let finalApplyUrl = '';
+
+      if (source === 'selected') {
+        if (!selectedJob) throw new Error('Please select a job first.');
+        jd = activeFullJD || selectedJob.description || '';
+        title = jobDetails?.title || selectedJob.title || '';
+        comp = jobDetails?.company || selectedJob.company || '';
+        finalApplyUrl = getApplyUrl(jobDetails) || getApplyUrl(selectedJob);
+      } else {
+        jd = jobDescription.trim();
+        title = jobTitle.trim();
+        comp = company.trim();
+        finalApplyUrl = applyUrl.trim();
+      }
+
+      if (!jd.trim()) {
+        throw new Error('Job description is required.');
+      }
+
       const res = await fetch('/api/tailor-resume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -140,18 +177,24 @@ export default function SearchPage() {
           jobDescription: jd,
           jobTitle: title,
           company: comp,
+          applyUrl: finalApplyUrl,
+          mode,
         }),
       });
 
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Tailoring failed');
+
+      if (!res.ok) {
+        throw new Error(json.error || 'Tailoring failed');
+      }
 
       setTailorResult(json);
-      setActiveResultTab('resume');
+      setActiveResultTab(mode === 'cover_letter' ? 'cover' : 'resume');
     } catch (err) {
-      setTailorError(err.message || 'Could not tailor resume.');
+      setTailorError(err.message || 'Something went wrong');
     } finally {
       setIsTailoring(false);
+      setTailorAction(null);
     }
   }
 
@@ -162,21 +205,69 @@ export default function SearchPage() {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  function handleDownload(text, filename) {
-    if (!text) return;
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+  function openDownloadMenu(type) {
+    setDownloadMenu({ open: true, type });
+  }
+
+  function closeDownloadMenu() {
+    setDownloadMenu({ open: false, type: null });
+  }
+
+  async function handleExport(format) {
+    try {
+      const type = downloadMenu.type;
+      const content = type === 'resume' ? tailorResult?.resume : tailorResult?.coverLetter;
+      if (!content) return;
+
+      const baseName =
+        type === 'resume'
+          ? `resume-${(tailorResult?.jobTitle || jobTitle || 'tailored').toLowerCase().replace(/\s+/g, '-')}`
+          : `cover-letter-${(tailorResult?.company || company || 'tailored').toLowerCase().replace(/\s+/g, '-')}`;
+
+      setIsExporting(true);
+
+      const res = await fetch('/api/export-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content,
+          format,
+          fileName: baseName,
+          documentType: type,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Export failed');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${baseName}.${format === 'docx' ? 'docx' : 'pdf'}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      closeDownloadMenu();
+    } catch (err) {
+      setTailorError(err.message || 'Could not export document.');
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   const activeFullJD =
     activeTab === 'paste'
       ? jobDescription
-      : jobDetails?.description || selectedJob?.descriptionPreview || '';
+      : jobDetails?.description || selectedJob?.descriptionPreview || selectedJob?.description || '';
+
+  const currentApplyUrl =
+    activeTab === 'paste'
+      ? applyUrl.trim()
+      : getApplyUrl(jobDetails) || getApplyUrl(selectedJob);
 
   const showMatchScore = !!tailorResult?.matchScore && tailorResult.matchScore >= 65;
 
@@ -185,7 +276,6 @@ export default function SearchPage() {
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #13131a; color: #f0f0f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-
         .shell {
           min-height: 100vh;
           background:
@@ -193,7 +283,6 @@ export default function SearchPage() {
             radial-gradient(circle at bottom right, rgba(139,92,246,0.05), transparent 25%),
             #13131a;
         }
-
         .topbar {
           position: sticky;
           top: 0;
@@ -206,7 +295,6 @@ export default function SearchPage() {
           background: rgba(19,19,26,0.92);
           backdrop-filter: blur(20px);
         }
-
         .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
         .brand-mark {
           width: 36px;
@@ -219,34 +307,8 @@ export default function SearchPage() {
         }
         .brand-name { font-size: 17px; font-weight: 700; }
         .topbar-right { display: flex; align-items: center; gap: 10px; }
-
-        .btn-ghost {
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.1);
-          color: #a0a0b8;
+        .btn-ghost, .btn-primary, .btn-secondary, .action-btn {
           border-radius: 9px;
-          padding: 9px 14px;
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.2s;
-          text-decoration: none;
-          display: inline-flex;
-          align-items: center;
-        }
-
-        .btn-ghost:hover { background: rgba(255,255,255,0.09); color: #f0f0f5; }
-
-        .btn-primary {
-          background: #4f8ef7;
-          border: none;
-          color: white;
-          border-radius: 9px;
-          padding: 10px 18px;
-          font-size: 14px;
-          font-weight: 700;
-          cursor: pointer;
           font-family: inherit;
           transition: all 0.2s;
           display: inline-flex;
@@ -254,61 +316,65 @@ export default function SearchPage() {
           justify-content: center;
           gap: 6px;
           text-decoration: none;
+          cursor: pointer;
         }
-
+        .btn-ghost {
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          color: #a0a0b8;
+          padding: 9px 14px;
+          font-size: 13px;
+          font-weight: 600;
+        }
+        .btn-ghost:hover { background: rgba(255,255,255,0.09); color: #f0f0f5; }
+        .btn-primary {
+          background: #4f8ef7;
+          border: none;
+          color: white;
+          padding: 10px 18px;
+          font-size: 14px;
+          font-weight: 700;
+        }
         .btn-primary:hover:not(:disabled) {
           background: #6fa3ff;
           transform: translateY(-1px);
           box-shadow: 0 8px 24px rgba(79,142,247,0.3);
         }
-
-        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
         .btn-secondary {
           background: rgba(255,255,255,0.05);
           border: 1px solid rgba(255,255,255,0.12);
           color: #f0f0f5;
-          border-radius: 9px;
           padding: 10px 18px;
           font-size: 14px;
           font-weight: 700;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.2s;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-          text-decoration: none;
         }
-
         .btn-secondary:hover:not(:disabled) {
           background: rgba(255,255,255,0.08);
           border-color: rgba(255,255,255,0.18);
         }
-
+        .btn-primary:disabled, .btn-secondary:disabled, .action-btn:disabled, .btn-ghost.disabled-link {
+          opacity: 0.5;
+          cursor: not-allowed;
+          pointer-events: none;
+        }
         .layout {
-          max-width: 1360px;
+          max-width: 1440px;
           margin: 0 auto;
           padding: 32px 28px;
           display: grid;
-          grid-template-columns: 460px 1fr;
+          grid-template-columns: 420px 1fr;
           gap: 24px;
         }
-
         .card {
           background: rgba(255,255,255,0.025);
           border: 1px solid rgba(255,255,255,0.08);
           border-radius: 20px;
           padding: 24px;
         }
-
         .page-heading { font-size: 28px; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 6px; }
         .page-subheading { color: #a0a0b8; font-size: 14px; line-height: 1.7; margin-bottom: 22px; }
-
         .card-title { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 6px; }
         .card-sub { color: #a0a0b8; font-size: 14px; line-height: 1.6; margin-bottom: 18px; }
-
         .tab-row {
           display: inline-flex;
           gap: 6px;
@@ -318,7 +384,6 @@ export default function SearchPage() {
           border: 1px solid rgba(255,255,255,0.07);
           margin-bottom: 20px;
         }
-
         .tab-btn {
           padding: 9px 16px;
           border-radius: 9px;
@@ -331,13 +396,11 @@ export default function SearchPage() {
           background: transparent;
           color: #6b6b85;
         }
-
         .tab-btn.active {
           background: rgba(79,142,247,0.15);
           color: #f0f0f5;
           border: 1px solid rgba(79,142,247,0.22);
         }
-
         .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
         .label {
           font-size: 12px;
@@ -346,8 +409,7 @@ export default function SearchPage() {
           text-transform: uppercase;
           letter-spacing: 0.06em;
         }
-
-        .input, .textarea {
+        .input, .textarea, .select {
           width: 100%;
           background: rgba(255,255,255,0.05);
           border: 1px solid rgba(255,255,255,0.1);
@@ -359,71 +421,38 @@ export default function SearchPage() {
           font-family: inherit;
           transition: all 0.2s;
         }
-
         .input::placeholder, .textarea::placeholder { color: #4a4a60; }
-        .input:focus, .textarea:focus {
+        .input:focus, .textarea:focus, .select:focus {
           border-color: rgba(79,142,247,0.5);
           box-shadow: 0 0 0 3px rgba(79,142,247,0.1);
         }
-
         .textarea { resize: vertical; line-height: 1.7; min-height: 220px; }
-
         .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .search-row { display: flex; gap: 10px; align-items: flex-end; }
-        .search-row .field { flex: 1; margin-bottom: 0; }
-        .search-row .btn-primary { height: 44px; flex-shrink: 0; padding: 0 18px; }
-
-        .job-list {
+        .top-search-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .more-filters {
+          margin-top: 14px;
+          padding-top: 14px;
+          border-top: 1px solid rgba(255,255,255,0.08);
+        }
+        .filter-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+          margin-top: 12px;
+        }
+        .search-actions {
           display: flex;
-          flex-direction: column;
           gap: 10px;
           margin-top: 16px;
-          max-height: 70vh;
-          overflow-y: auto;
-          padding-right: 4px;
-        }
-
-        .job-item {
-          padding: 16px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.07);
-          background: rgba(255,255,255,0.03);
-          cursor: pointer;
-          transition: all 0.18s;
-        }
-
-        .job-item:hover {
-          border-color: rgba(79,142,247,0.25);
-          background: rgba(79,142,247,0.05);
-        }
-
-        .job-item.selected {
-          border-color: rgba(79,142,247,0.42);
-          background: rgba(79,142,247,0.09);
-          box-shadow: 0 0 0 1px rgba(79,142,247,0.15) inset;
-        }
-
-        .job-item-title { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
-        .job-item-company { font-size: 13px; color: #d4d4e4; margin-bottom: 6px; }
-        .job-item-meta {
-          font-size: 12px;
-          color: #7d7d96;
-          display: flex;
-          gap: 10px;
-          align-items: center;
           flex-wrap: wrap;
         }
-
-        .job-item-badge {
-          background: rgba(79,142,247,0.1);
-          color: #4f8ef7;
-          border: 1px solid rgba(79,142,247,0.2);
-          border-radius: 99px;
-          padding: 2px 8px;
-          font-size: 11px;
-          font-weight: 600;
+        .search-actions.compact-top { margin-top: 14px; }
+        .action-row {
+          display: flex;
+          gap: 10px;
+          margin-top: 8px;
+          flex-wrap: wrap;
         }
-
         .error-box {
           margin-top: 14px;
           padding: 12px 16px;
@@ -434,7 +463,6 @@ export default function SearchPage() {
           font-size: 13px;
           font-weight: 500;
         }
-
         .info-box {
           margin-top: 14px;
           padding: 12px 16px;
@@ -445,25 +473,82 @@ export default function SearchPage() {
           font-size: 13px;
           font-weight: 500;
         }
-
-        .success-box {
-          margin-top: 14px;
-          padding: 12px 16px;
-          border-radius: 10px;
-          background: rgba(52,211,153,0.08);
-          border: 1px solid rgba(52,211,153,0.2);
-          color: #34d399;
-          font-size: 13px;
-          font-weight: 500;
+        .job-results-shell {
+          display: grid;
+          grid-template-columns: 360px 1fr;
+          gap: 18px;
+          min-height: 620px;
         }
-
+        .results-list {
+          border-right: 1px solid rgba(255,255,255,0.07);
+          padding-right: 16px;
+          min-height: 100%;
+        }
+        .results-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 14px;
+        }
+        .results-count {
+          font-size: 12px;
+          color: #7d7d96;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .job-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          max-height: 72vh;
+          overflow-y: auto;
+          padding-right: 4px;
+        }
+        .job-item {
+          padding: 16px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.07);
+          background: rgba(255,255,255,0.03);
+          cursor: pointer;
+          transition: all 0.18s;
+        }
+        .job-item:hover {
+          border-color: rgba(79,142,247,0.25);
+          background: rgba(79,142,247,0.05);
+        }
+        .job-item.selected {
+          border-color: rgba(79,142,247,0.42);
+          background: rgba(79,142,247,0.09);
+          box-shadow: 0 0 0 1px rgba(79,142,247,0.15) inset;
+        }
+        .job-item-title { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+        .job-item-company { font-size: 13px; color: #d4d4e4; margin-bottom: 6px; }
+        .job-item-meta {
+          font-size: 12px;
+          color: #7d7d96;
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .job-item-badge {
+          background: rgba(79,142,247,0.1);
+          color: #4f8ef7;
+          border: 1px solid rgba(79,142,247,0.2);
+          border-radius: 99px;
+          padding: 2px 8px;
+          font-size: 11px;
+          font-weight: 600;
+        }
+        .detail-pane { min-width: 0; }
         .job-panel-title {
           font-size: 24px;
           font-weight: 800;
           letter-spacing: -0.03em;
           margin-bottom: 8px;
         }
-
         .job-panel-meta {
           display: flex;
           flex-wrap: wrap;
@@ -472,14 +557,6 @@ export default function SearchPage() {
           font-size: 13px;
           margin-bottom: 18px;
         }
-
-        .job-actions {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          margin-bottom: 18px;
-        }
-
         .job-description {
           background: rgba(255,255,255,0.03);
           border: 1px solid rgba(255,255,255,0.07);
@@ -489,12 +566,11 @@ export default function SearchPage() {
           color: #d7d7e6;
           line-height: 1.8;
           white-space: pre-wrap;
-          min-height: 320px;
-          max-height: 58vh;
+          min-height: 360px;
+          max-height: 62vh;
           overflow-y: auto;
         }
-
-        .result-card { display: flex; flex-direction: column; gap: 0; }
+        .result-card { display: flex; flex-direction: column; gap: 0; position: relative; }
         .result-header {
           display: flex;
           align-items: center;
@@ -503,7 +579,6 @@ export default function SearchPage() {
           margin-bottom: 18px;
           flex-wrap: wrap;
         }
-
         .result-title { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
         .match-badge {
           display: inline-flex;
@@ -517,14 +592,12 @@ export default function SearchPage() {
           font-size: 13px;
           font-weight: 700;
         }
-
         .result-tabs {
           display: flex;
           gap: 0;
           border-bottom: 1px solid rgba(255,255,255,0.07);
           margin-bottom: 20px;
         }
-
         .result-tab {
           padding: 10px 18px;
           font-size: 13px;
@@ -538,43 +611,29 @@ export default function SearchPage() {
           margin-bottom: -1px;
           transition: all 0.18s;
         }
-
         .result-tab.active { color: #4f8ef7; border-bottom-color: #4f8ef7; }
-
         .result-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
-
         .action-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
           padding: 9px 14px;
-          border-radius: 9px;
           font-size: 13px;
           font-weight: 600;
-          cursor: pointer;
-          font-family: inherit;
-          transition: all 0.18s;
           border: none;
         }
-
         .action-copy {
           background: rgba(79,142,247,0.12);
           color: #4f8ef7;
           border: 1px solid rgba(79,142,247,0.2);
         }
-
         .action-download {
           background: rgba(52,211,153,0.1);
           color: #34d399;
           border: 1px solid rgba(52,211,153,0.2);
         }
-
         .action-new {
           background: rgba(255,255,255,0.05);
           color: #a0a0b8;
           border: 1px solid rgba(255,255,255,0.1);
         }
-
         .result-text {
           background: rgba(255,255,255,0.03);
           border: 1px solid rgba(255,255,255,0.07);
@@ -588,7 +647,6 @@ export default function SearchPage() {
           overflow-y: auto;
           font-family: 'Courier New', monospace;
         }
-
         .empty-state {
           display: flex;
           flex-direction: column;
@@ -597,15 +655,13 @@ export default function SearchPage() {
           text-align: center;
           padding: 72px 32px;
           color: #4a4a60;
+          min-height: 420px;
         }
-
         .empty-icon { font-size: 40px; margin-bottom: 16px; opacity: 0.5; }
         .empty-title { font-size: 16px; font-weight: 600; color: #6b6b85; margin-bottom: 8px; }
-        .empty-sub { font-size: 13px; color: #4a4a60; line-height: 1.7; max-width: 320px; }
-
+        .empty-sub { font-size: 13px; color: #4a4a60; line-height: 1.7; max-width: 360px; }
         .loading-steps { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
         .loading-step { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #a0a0b8; }
-
         .spin {
           width: 16px;
           height: 16px;
@@ -615,9 +671,7 @@ export default function SearchPage() {
           animation: spin 0.8s linear infinite;
           flex-shrink: 0;
         }
-
         @keyframes spin { to { transform: rotate(360deg); } }
-
         .profile-warn {
           padding: 14px 16px;
           border-radius: 12px;
@@ -627,20 +681,60 @@ export default function SearchPage() {
           font-size: 13px;
           margin-bottom: 20px;
         }
-
-        @media (max-width: 1100px) {
-          .layout { grid-template-columns: 1fr; }
-          .job-list { max-height: 420px; }
+        .download-menu {
+          position: absolute;
+          right: 0;
+          top: 42px;
+          min-width: 170px;
+          background: #1d1d27;
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 12px;
+          padding: 8px;
+          box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+          z-index: 20;
         }
-
-        @media (max-width: 600px) {
+        .download-menu button {
+          width: 100%;
+          text-align: left;
+          background: transparent;
+          border: none;
+          color: #f0f0f5;
+          padding: 10px 12px;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 13px;
+          font-family: inherit;
+        }
+        .download-menu button:hover {
+          background: rgba(255,255,255,0.06);
+        }
+        .download-wrap {
+          position: relative;
+        }
+        @media (max-width: 1200px) {
+          .layout { grid-template-columns: 1fr; }
+          .job-results-shell { grid-template-columns: 1fr; }
+          .results-list {
+            border-right: none;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+            padding-right: 0;
+            padding-bottom: 16px;
+            margin-bottom: 16px;
+          }
+          .job-list { max-height: 360px; }
+        }
+        @media (max-width: 700px) {
           .layout { padding: 16px; }
           .topbar { padding: 14px 16px; }
-          .two-col { grid-template-columns: 1fr; }
-          .search-row { flex-direction: column; align-items: stretch; }
-          .search-row .btn-primary { width: 100%; }
-          .job-actions { flex-direction: column; }
-          .job-actions > * { width: 100%; }
+          .two-col, .top-search-grid, .filter-grid { grid-template-columns: 1fr; }
+          .search-actions, .action-row, .result-actions { flex-direction: column; }
+          .search-actions > *, .action-row > *, .result-actions > * { width: 100%; }
+          .download-menu {
+            left: 0;
+            right: auto;
+            width: 100%;
+            top: calc(100% + 8px);
+          }
         }
       `}</style>
 
@@ -695,7 +789,7 @@ export default function SearchPage() {
 
             {activeTab === 'search' && (
               <>
-                <div className="search-row">
+                <div className="top-search-grid">
                   <div className="field">
                     <label className="label">Job title / keywords</label>
                     <input
@@ -706,6 +800,7 @@ export default function SearchPage() {
                       onKeyDown={(e) => e.key === 'Enter' && handleSearchJobs()}
                     />
                   </div>
+
                   <div className="field">
                     <label className="label">Location</label>
                     <input
@@ -716,52 +811,97 @@ export default function SearchPage() {
                       onKeyDown={(e) => e.key === 'Enter' && handleSearchJobs()}
                     />
                   </div>
+                </div>
+
+                <div className="search-actions compact-top">
+                  <button
+                    className="btn-ghost"
+                    onClick={() => setShowMoreFilters((v) => !v)}
+                  >
+                    {showMoreFilters ? 'Hide more filters' : 'Show more filters'}
+                  </button>
+                </div>
+
+                {showMoreFilters && (
+                  <div className="more-filters">
+                    <div className="filter-grid">
+                      <div className="field">
+                        <label className="label">Company</label>
+                        <input
+                          className="input"
+                          placeholder="e.g. Google"
+                          value={searchCompany}
+                          onChange={(e) => setSearchCompany(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="field">
+                        <label className="label">Date posted</label>
+                        <select className="select" value={datePosted} onChange={(e) => setDatePosted(e.target.value)}>
+                          <option value="">Any time</option>
+                          <option value="today">Today</option>
+                          <option value="3days">Last 3 days</option>
+                          <option value="week">Last week</option>
+                          <option value="month">Last month</option>
+                        </select>
+                      </div>
+
+                      <div className="field">
+                        <label className="label">Job type</label>
+                        <select className="select" value={jobType} onChange={(e) => setJobType(e.target.value)}>
+                          <option value="">Any</option>
+                          <option value="full_time">Full-time</option>
+                          <option value="part_time">Part-time</option>
+                          <option value="contract">Contract</option>
+                          <option value="internship">Internship</option>
+                          <option value="temporary">Temporary</option>
+                        </select>
+                      </div>
+
+                      <div className="field">
+                        <label className="label">Workplace type</label>
+                        <select className="select" value={remoteType} onChange={(e) => setRemoteType(e.target.value)}>
+                          <option value="">Any</option>
+                          <option value="remote">Remote</option>
+                          <option value="hybrid">Hybrid</option>
+                          <option value="onsite">On-site</option>
+                        </select>
+                      </div>
+
+                      <div className="field">
+                        <label className="label">Experience level</label>
+                        <select className="select" value={experienceLevel} onChange={(e) => setExperienceLevel(e.target.value)}>
+                          <option value="">Any</option>
+                          <option value="entry">Entry</option>
+                          <option value="associate">Associate</option>
+                          <option value="mid">Mid</option>
+                          <option value="senior">Senior</option>
+                          <option value="director">Director</option>
+                        </select>
+                      </div>
+
+                      <div className="field">
+                        <label className="label">Sort by</label>
+                        <select className="select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                          <option value="relevance">Relevance</option>
+                          <option value="newest">Newest</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="search-actions">
                   <button
                     className="btn-primary"
                     onClick={handleSearchJobs}
                     disabled={isSearching || !searchQuery.trim()}
                   >
-                    {isSearching ? <><div className="spin" />Searching</> : 'Search'}
+                    {isSearching ? <><div className="spin" />Searching</> : 'Search jobs'}
                   </button>
                 </div>
 
                 {searchError && <div className="error-box">{searchError}</div>}
-
-                {!isSearching && !searchError && searchResults.length > 0 && (
-                  <>
-                    <div style={{ marginTop: 18, fontSize: 12, color: '#7d7d96', fontWeight: 600 }}>
-                      {searchResults.length} jobs found
-                    </div>
-                    <div className="job-list">
-                      {searchResults.map((job, i) => (
-                        <div
-                          key={job.jobId || `${job.title}-${job.company}-${i}`}
-                          className={`job-item ${selectedJob?.jobId === job.jobId ? 'selected' : ''}`}
-                          onClick={() => handleSelectJob(job)}
-                        >
-                          <div className="job-item-title">{job.title}</div>
-                          <div className="job-item-company">{job.company || 'Unknown company'}</div>
-                          <div className="job-item-meta">
-                            {job.location && <span>📍 {job.location}</span>}
-                            {job.type && <span className="job-item-badge">{job.type}</span>}
-                            {job.source && <span>{job.source}</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {isSearching && (
-                  <div style={{ textAlign: 'center', padding: '32px', color: '#6b6b85', fontSize: '14px' }}>
-                    <div className="spin" style={{ margin: '0 auto 12px' }} />
-                    Searching live job listings...
-                  </div>
-                )}
-
-                {!isSearching && !searchError && searchResults.length === 0 && searchQuery && (
-                  <div className="info-box">No jobs found for that search.</div>
-                )}
               </>
             )}
 
@@ -789,6 +929,16 @@ export default function SearchPage() {
                 </div>
 
                 <div className="field">
+                  <label className="label">Apply URL</label>
+                  <input
+                    className="input"
+                    placeholder="https://company.com/jobs/123"
+                    value={applyUrl}
+                    onChange={(e) => setApplyUrl(e.target.value)}
+                  />
+                </div>
+
+                <div className="field">
                   <label className="label">Full job description *</label>
                   <textarea
                     className="textarea"
@@ -798,100 +948,173 @@ export default function SearchPage() {
                   />
                 </div>
 
-                <div className="job-actions">
+                <div className="action-row">
                   <button
                     className="btn-primary"
-                    onClick={() => handleTailor('paste')}
-                    disabled={isTailoring || !activeFullJD.trim()}
+                    onClick={() => handleTailor('paste', 'resume')}
+                    disabled={isTailoring || !jobDescription.trim()}
                   >
-                    {isTailoring ? <><div className="spin" />Tailoring...</> : 'Tailor resume'}
+                    {isTailoring && tailorAction === 'resume' ? 'Working...' : 'Tailor resume'}
                   </button>
 
                   <button
                     className="btn-secondary"
-                    onClick={() => handleTailor('paste')}
-                    disabled={isTailoring || !activeFullJD.trim()}
+                    onClick={() => handleTailor('paste', 'cover_letter')}
+                    disabled={isTailoring || !jobDescription.trim()}
                   >
-                    Generate cover letter
+                    {isTailoring && tailorAction === 'cover_letter' ? 'Working...' : 'Generate cover letter'}
                   </button>
+
+                  {applyUrl.trim() ? (
+                    <a
+                      href={applyUrl.trim()}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-ghost"
+                    >
+                      Apply now
+                    </a>
+                  ) : (
+                    <span className="btn-ghost disabled-link">Apply now</span>
+                  )}
                 </div>
+
+                {!!tailorError && <div className="error-box">{tailorError}</div>}
               </>
             )}
           </section>
 
           <section className="card result-card">
-            {activeTab === 'search' && !selectedJob && !isSearching && (
+            {activeTab === 'search' && !isSearching && !searchError && searchResults.length === 0 && !selectedJob && (
               <div className="empty-state">
                 <div className="empty-icon">✦</div>
-                <div className="empty-title">Select a job to review it</div>
+                <div className="empty-title">Search jobs and review them here</div>
                 <div className="empty-sub">
-                  Open a listing to read the full description before tailoring your resume or applying.
+                  Your job results will appear on the right. Click any listing to load the full description and details.
                 </div>
               </div>
             )}
 
-            {activeTab === 'search' && selectedJob && (
-              <>
-                <div className="job-panel-title">
-                  {jobDetails?.title || selectedJob.title || 'Job details'}
+            {activeTab === 'search' && isSearching && (
+              <div className="empty-state">
+                <div className="spin" style={{ width: 22, height: 22, marginBottom: 16 }} />
+                <div className="empty-title">Searching live job listings...</div>
+                <div className="empty-sub">
+                  Pulling results and preparing the detail panel.
                 </div>
+              </div>
+            )}
 
-                <div className="job-panel-meta">
-                  <span>{jobDetails?.company || selectedJob.company || 'Unknown company'}</span>
-                  {(jobDetails?.location || selectedJob.location) && (
-                    <span>📍 {jobDetails?.location || selectedJob.location}</span>
-                  )}
-                  {(jobDetails?.type || selectedJob.type) && (
-                    <span>{jobDetails?.type || selectedJob.type}</span>
-                  )}
-                </div>
-
-                <div className="job-actions">
-                  <button
-                    className="btn-primary"
-                    onClick={() => handleTailor('selected')}
-                    disabled={isTailoring || isLoadingJob || !activeFullJD.trim()}
-                  >
-                    {isTailoring ? <><div className="spin" />Tailoring...</> : 'Tailor resume'}
-                  </button>
-
-                  <button
-                    className="btn-secondary"
-                    onClick={() => handleTailor('selected')}
-                    disabled={isTailoring || isLoadingJob || !activeFullJD.trim()}
-                  >
-                    Generate cover letter
-                  </button>
-
-                  {!!(jobDetails?.applyUrl || selectedJob.applyUrl) && (
-                    <a
-                      className="btn-secondary"
-                      href={jobDetails?.applyUrl || selectedJob.applyUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Apply now
-                    </a>
-                  )}
-                </div>
-
-                {jobDetailsError && <div className="info-box">{jobDetailsError}</div>}
-
-                {isLoadingJob ? (
-                  <div style={{ padding: '40px 0' }}>
-                    <div className="loading-step">
-                      <div className="spin" />
-                      <span>Loading full job description...</span>
+            {activeTab === 'search' && searchResults.length > 0 && !tailorResult && (
+              <div className="job-results-shell">
+                <div className="results-list">
+                  <div className="results-header">
+                    <div>
+                      <div className="card-title" style={{ marginBottom: 2 }}>Search results</div>
+                      <div className="results-count">{searchResults.length} jobs found</div>
                     </div>
                   </div>
-                ) : (
-                  <div className="job-description">
-                    {activeFullJD || 'Full job description is not available for this listing.'}
-                  </div>
-                )}
 
-                {!!tailorError && <div className="error-box">{tailorError}</div>}
-              </>
+                  <div className="job-list">
+                    {searchResults.map((job, i) => (
+                      <div
+                        key={job.jobId || `${job.title}-${job.company}-${i}`}
+                        className={`job-item ${selectedJob?.jobId === job.jobId ? 'selected' : ''}`}
+                        onClick={() => handleSelectJob(job)}
+                      >
+                        <div className="job-item-title">{job.title}</div>
+                        <div className="job-item-company">{job.company || 'Unknown company'}</div>
+                        <div className="job-item-meta">
+                          {job.location && <span>📍 {job.location}</span>}
+                          {job.type && <span className="job-item-badge">{job.type}</span>}
+                          {job.source && <span>{job.source}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="detail-pane">
+                  {!selectedJob && (
+                    <div className="empty-state" style={{ minHeight: 540 }}>
+                      <div className="empty-icon">✦</div>
+                      <div className="empty-title">Select a job to review it</div>
+                      <div className="empty-sub">
+                        Once selected, the full job description and actions will appear here.
+                      </div>
+                    </div>
+                  )}
+
+                  {!!selectedJob && (
+                    <>
+                      <div className="job-panel-title">
+                        {jobDetails?.title || selectedJob.title || 'Job details'}
+                      </div>
+
+                      <div className="job-panel-meta">
+                        <span>{jobDetails?.company || selectedJob.company || 'Unknown company'}</span>
+                        {(jobDetails?.location || selectedJob.location) && (
+                          <span>📍 {jobDetails?.location || selectedJob.location}</span>
+                        )}
+                        {(jobDetails?.type || selectedJob.type) && (
+                          <span>{jobDetails?.type || selectedJob.type}</span>
+                        )}
+                        {(jobDetails?.source || selectedJob.source) && (
+                          <span>{jobDetails?.source || selectedJob.source}</span>
+                        )}
+                      </div>
+
+                      <div className="action-row">
+                        <button
+                          className="btn-primary"
+                          onClick={() => handleTailor('selected', 'resume')}
+                          disabled={isTailoring || isLoadingJob || !activeFullJD.trim()}
+                        >
+                          {isTailoring && tailorAction === 'resume' ? 'Working...' : 'Tailor resume'}
+                        </button>
+
+                        <button
+                          className="btn-secondary"
+                          onClick={() => handleTailor('selected', 'cover_letter')}
+                          disabled={isTailoring || isLoadingJob || !activeFullJD.trim()}
+                        >
+                          {isTailoring && tailorAction === 'cover_letter' ? 'Working...' : 'Generate cover letter'}
+                        </button>
+
+                        {currentApplyUrl ? (
+                          <a
+                            href={currentApplyUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn-ghost"
+                          >
+                            Apply now
+                          </a>
+                        ) : (
+                          <span className="btn-ghost disabled-link">Apply now</span>
+                        )}
+                      </div>
+
+                      {jobDetailsError && <div className="info-box">{jobDetailsError}</div>}
+
+                      {isLoadingJob ? (
+                        <div style={{ padding: '40px 0' }}>
+                          <div className="loading-step">
+                            <div className="spin" />
+                            <span>Loading full job description...</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="job-description">
+                          {activeFullJD || 'Full job description is not available for this listing.'}
+                        </div>
+                      )}
+
+                      {!!tailorError && <div className="error-box">{tailorError}</div>}
+                    </>
+                  )}
+                </div>
+              </div>
             )}
 
             {activeTab === 'paste' && !tailorResult && !isTailoring && (
@@ -1007,34 +1230,42 @@ export default function SearchPage() {
                     {copied ? 'Copied!' : 'Copy'}
                   </button>
 
-                  <button
-                    className="action-btn action-download"
-                    onClick={() =>
-                      handleDownload(
-                        tailorResult.resume,
-                        `resume-${(tailorResult.jobTitle || jobTitle || 'tailored')
-                          .toLowerCase()
-                          .replace(/\s+/g, '-')}.txt`
-                      )
-                    }
-                  >
-                    Download resume
-                  </button>
-
-                  {!!tailorResult.coverLetter && (
+                  <div className="download-wrap">
                     <button
                       className="action-btn action-download"
-                      onClick={() =>
-                        handleDownload(
-                          tailorResult.coverLetter,
-                          `cover-letter-${(tailorResult.company || company || 'tailored')
-                            .toLowerCase()
-                            .replace(/\s+/g, '-')}.txt`
-                        )
-                      }
+                      onClick={() => openDownloadMenu('resume')}
+                      disabled={isExporting}
                     >
-                      Download cover letter
+                      {isExporting && downloadMenu.type === 'resume' ? 'Exporting...' : 'Download resume'}
                     </button>
+
+                    {downloadMenu.open && downloadMenu.type === 'resume' && (
+                      <div className="download-menu">
+                        <button onClick={() => handleExport('pdf')}>Download as PDF</button>
+                        <button onClick={() => handleExport('docx')}>Download as DOCX</button>
+                        <button onClick={closeDownloadMenu}>Cancel</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {!!tailorResult.coverLetter && (
+                    <div className="download-wrap">
+                      <button
+                        className="action-btn action-download"
+                        onClick={() => openDownloadMenu('cover')}
+                        disabled={isExporting}
+                      >
+                        {isExporting && downloadMenu.type === 'cover' ? 'Exporting...' : 'Download cover letter'}
+                      </button>
+
+                      {downloadMenu.open && downloadMenu.type === 'cover' && (
+                        <div className="download-menu">
+                          <button onClick={() => handleExport('pdf')}>Download as PDF</button>
+                          <button onClick={() => handleExport('docx')}>Download as DOCX</button>
+                          <button onClick={closeDownloadMenu}>Cancel</button>
+                        </div>
+                      )}
+                    </div>
                   )}
 
                   <button
@@ -1043,6 +1274,7 @@ export default function SearchPage() {
                       setTailorResult(null);
                       setTailorError('');
                       setActiveResultTab('resume');
+                      closeDownloadMenu();
                     }}
                   >
                     Clear result
@@ -1050,8 +1282,6 @@ export default function SearchPage() {
                 </div>
               </>
             )}
-
-            {activeTab === 'paste' && !!tailorError && <div className="error-box">{tailorError}</div>}
           </section>
         </main>
       </div>
