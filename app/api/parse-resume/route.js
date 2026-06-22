@@ -19,7 +19,14 @@ const SYSTEM_PROMPT = `Extract resume data and return ONLY valid JSON with these
   "skills": "",
   "projects": ""
 }
-For experience, education, certifications and projects return readable plain text. No markdown. No explanation. JSON only.`;
+
+Rules:
+- Return valid JSON only.
+- Do not include markdown fences.
+- Use empty strings for missing values.
+- For experience, education, certifications, skills, and projects return readable plain text.
+- Do not invent details that are not present in the resume.
+- Keep line breaks where useful inside long text fields.`;
 
 export async function POST(request) {
   try {
@@ -51,33 +58,30 @@ export async function POST(request) {
       const { extractText } = await import('unpdf');
       const result = await extractText(new Uint8Array(buffer));
       extractedText = result?.text?.trim() || '';
-
-      if (!extractedText) {
-        return NextResponse.json(
-          { error: 'Could not extract text from PDF.' },
-          { status: 400 }
-        );
-      }
     }
 
     if (isDocx) {
       const mammoth = await import('mammoth');
       const result = await mammoth.extractRawText({ buffer });
-      extractedText = result.value?.trim() || '';
+      extractedText = result?.value?.trim() || '';
+    }
 
-      if (!extractedText) {
-        return NextResponse.json(
-          { error: 'Could not extract text from DOCX.' },
-          { status: 400 }
-        );
-      }
+    if (!extractedText) {
+      return NextResponse.json(
+        { error: `Could not extract text from ${isPdf ? 'PDF' : 'DOCX'}.` },
+        { status: 400 }
+      );
     }
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-nano',
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: extractedText.slice(0, 12000) },
+        {
+          role: 'user',
+          content: `Resume text:\n\n${extractedText.slice(0, 15000)}`,
+        },
       ],
     });
 
@@ -90,23 +94,33 @@ export async function POST(request) {
       );
     }
 
-    const cleaned = raw
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-
     let parsed;
     try {
-      parsed = JSON.parse(cleaned);
+      parsed = JSON.parse(raw);
     } catch {
       return NextResponse.json(
-        { error: 'AI returned invalid JSON.', raw: cleaned },
+        { error: 'AI returned invalid JSON.', raw },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ success: true, data: parsed });
+    const safe = {
+      firstName: parsed.firstName || '',
+      lastName: parsed.lastName || '',
+      email: parsed.email || '',
+      phone: parsed.phone || '',
+      address: parsed.address || '',
+      linkedin: parsed.linkedin || '',
+      portfolio: parsed.portfolio || '',
+      summary: parsed.summary || '',
+      experience: parsed.experience || '',
+      education: parsed.education || '',
+      certifications: parsed.certifications || '',
+      skills: parsed.skills || '',
+      projects: parsed.projects || '',
+    };
+
+    return NextResponse.json({ success: true, data: safe });
   } catch (err) {
     console.error('Parse resume error:', err);
     return NextResponse.json(

@@ -46,7 +46,9 @@ export async function POST(request) {
     }
 
     const body = await request.json();
-    const { profile, jobDescription, jobTitle, company } = body || {};
+    const { profile, jobDescription, jobTitle, company, applyUrl, mode } = body || {};
+
+    const normalizedMode = mode === 'cover_letter' || mode === 'cover' ? 'cover_letter' : 'resume';
 
     if (!profile || typeof profile !== 'object') {
       return NextResponse.json({ error: 'Profile is required.' }, { status: 400 });
@@ -60,13 +62,20 @@ export async function POST(request) {
     }
 
     const normalizedProfile = {
-      first_name: profile.first_name || profile.firstName || '',
-      last_name: profile.last_name || profile.lastName || '',
+      first_name: profile.first_name || profile.firstName || profile.full_name?.split(' ')?.[0] || '',
+      last_name:
+        profile.last_name ||
+        profile.lastName ||
+        profile.full_name?.split(' ')?.slice(1).join(' ') ||
+        '',
+      full_name:
+        profile.full_name ||
+        `${profile.first_name || profile.firstName || ''} ${profile.last_name || profile.lastName || ''}`.trim(),
       email: profile.email || '',
       phone: profile.phone || '',
-      address: profile.address || '',
+      address: profile.address || profile.location || '',
       linkedin: profile.linkedin || '',
-      portfolio: profile.portfolio || '',
+      portfolio: profile.portfolio || profile.website || '',
       target_role: profile.target_role || profile.targetRole || '',
       preferred_location: profile.preferred_location || profile.preferredLocation || '',
       summary: profile.summary || '',
@@ -79,40 +88,60 @@ export async function POST(request) {
     };
 
     const candidateName =
-      `${normalizedProfile.first_name} ${normalizedProfile.last_name}`.trim() || 'Candidate';
+      normalizedProfile.full_name ||
+      `${normalizedProfile.first_name} ${normalizedProfile.last_name}`.trim() ||
+      'Candidate';
 
-    const resumeCompletion = await openai.chat.completions.create({
-      model: 'gpt-5-nano',
-      response_format: { type: 'json_object' },
-      temperature: 1,
-      messages: [
-        {
-          role: 'system',
-          content: `You are an expert ATS resume writer.
-Return ONLY valid JSON.
+    let resumeText = '';
+    let coverLetter = '';
+    let matchScore = null;
+    let matchReasons = '';
+    let tailoredStructured = null;
 
+    if (normalizedMode === 'resume') {
+      const resumeCompletion = await openai.chat.completions.create({
+        model: 'gpt-5-nano',
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: `You are an expert ATS resume writer.
+
+Return ONLY valid JSON in this exact shape:
 {
   "name": "",
+  "contact": {
+    "email": "",
+    "phone": "",
+    "address": "",
+    "linkedin": "",
+    "portfolio": ""
+  },
   "summary": "",
   "skills": [],
   "experience": [{ "title": "", "company": "", "years": "", "bullets": [] }],
   "education": [{ "degree": "", "institution": "", "year": "" }],
   "certifications": [],
+  "projects": [{ "name": "", "details": [] }],
   "match_score": 0,
   "match_reasons": []
 }
 
 Rules:
-- Use the candidate's real background from the base profile.
-- Tailor the summary, skills ordering, and bullets to the target job.
-- Match keywords from the job description naturally.
-- Keep bullets specific and ATS-friendly.
-- match_score must be an integer from 0 to 100.
-- match_reasons must be an array of short strings.`,
-        },
-        {
-          role: 'user',
-          content: `BASE PROFILE JSON:
+- Use ONLY the candidate's real background from the base profile.
+- Do NOT invent employers, degrees, certifications, dates, or projects.
+- Rewrite the summary, skills ordering, and experience bullets to align strongly to the job.
+- Prioritize ATS keyword alignment naturally.
+- Every experience bullet must be strong, specific, and achievement/action oriented.
+- Include contact details from the candidate profile in the contact object.
+- skills must be concise, relevant, and job-targeted.
+- match_score must be realistic, not inflated, and based on actual alignment.
+- match_reasons must be short specific reasons for score strength or gaps.
+- Optimize as much as possible for ATS match, but never fabricate qualifications.`,
+          },
+          {
+            role: 'user',
+            content: `BASE PROFILE JSON:
 ${JSON.stringify(normalizedProfile)}
 
 JOB TITLE:
@@ -121,47 +150,71 @@ ${jobTitle || 'Not specified'}
 COMPANY:
 ${company || 'Not specified'}
 
+APPLY URL:
+${applyUrl || 'Not specified'}
+
 JOB DESCRIPTION:
 ${jobDescription.slice(0, 12000)}`,
-        },
-      ],
-    });
+          },
+        ],
+      });
 
-    const rawResume = resumeCompletion.choices?.[0]?.message?.content || '{}';
-    let tailored;
+      const rawResume = resumeCompletion.choices?.[0]?.message?.content || '{}';
 
-    try {
-      tailored = JSON.parse(rawResume);
-    } catch {
-      return NextResponse.json(
-        { error: 'Model returned invalid resume JSON.' },
-        { status: 500 }
-      );
+      try {
+        tailoredStructured = JSON.parse(rawResume);
+      } catch {
+        return NextResponse.json(
+          { error: 'Model returned invalid resume JSON.' },
+          { status: 500 }
+        );
+      }
+
+      tailoredStructured.name = tailoredStructured.name || candidateName;
+      tailoredStructured.contact = {
+        email: tailoredStructured?.contact?.email || normalizedProfile.email || '',
+        phone: tailoredStructured?.contact?.phone || normalizedProfile.phone || '',
+        address: tailoredStructured?.contact?.address || normalizedProfile.address || '',
+        linkedin: tailoredStructured?.contact?.linkedin || normalizedProfile.linkedin || '',
+        portfolio: tailoredStructured?.contact?.portfolio || normalizedProfile.portfolio || '',
+      };
+
+      resumeText = formatResumeAsText(tailoredStructured);
+
+      matchScore = Number.isInteger(tailoredStructured?.match_score)
+        ? tailoredStructured.match_score
+        : null;
+
+      matchReasons = Array.isArray(tailoredStructured?.match_reasons)
+        ? tailoredStructured.match_reasons.join('\n')
+        : '';
     }
 
-    const coverCompletion = await openai.chat.completions.create({
-      model: 'gpt-5-nano',
-      temperature: 1,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a professional cover letter writer.
+    if (normalizedMode === 'cover_letter') {
+      const coverCompletion = await openai.chat.completions.create({
+        model: 'gpt-5-nano',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a professional cover letter writer.
+
 Write a tailored cover letter.
 
 Rules:
 - Start with "Dear Hiring Manager,"
 - No address block
 - No placeholders
-- 4 short paragraphs
+- 4-5 short paragraphs
 - Use the candidate's real experience
+- Do not invent employers, titles, dates, certifications, or achievements
 - End with:
 Sincerely,
 ${candidateName}
-- Maximum 400 words`,
-        },
-        {
-          role: 'user',
-          content: `Candidate name: ${candidateName}
+- Maximum 400-500 words`,
+          },
+          {
+            role: 'user',
+            content: `Candidate name: ${candidateName}
 Target role: ${jobTitle || 'this role'}
 Company: ${company || 'this company'}
 
@@ -174,24 +227,35 @@ ${normalizedProfile.experience}
 Candidate skills:
 ${normalizedProfile.skills}
 
+Candidate projects:
+${normalizedProfile.projects}
+
+Candidate education:
+${normalizedProfile.education}
+
 Job description:
 ${jobDescription.slice(0, 8000)}`,
-        },
-      ],
-    });
+          },
+        ],
+      });
 
-    const coverLetter = coverCompletion.choices?.[0]?.message?.content?.trim() || '';
+      coverLetter = coverCompletion.choices?.[0]?.message?.content?.trim() || '';
+    }
 
-    const { error: applicationError } = await supabase.from('applications').insert({
+    const insertPayload = {
       user_id: user.id,
-      tailored_resume: tailored,
-      cover_letter: coverLetter,
-      match_score: Number.isInteger(tailored.match_score) ? tailored.match_score : 85,
-      status: 'pending',
+      tailored_resume: normalizedMode === 'resume' ? resumeText : null,
+      cover_letter: normalizedMode === 'cover_letter' ? coverLetter : null,
+      match_score: normalizedMode === 'resume' ? matchScore : null,
+      status: normalizedMode === 'resume' ? 'resume_generated' : 'cover_letter_generated',
       job_title: jobTitle || null,
       company: company || null,
       job_description: jobDescription,
-    });
+    };
+
+    const { error: applicationError } = await supabase
+      .from('applications')
+      .insert(insertPayload);
 
     if (applicationError) {
       return NextResponse.json(
@@ -215,19 +279,19 @@ ${jobDescription.slice(0, 8000)}`,
     }
 
     return NextResponse.json({
-      resume: formatResumeAsText(tailored),
-      coverLetter,
-      matchScore: tailored.match_score || 85,
-      matchReasons: Array.isArray(tailored.match_reasons)
-        ? tailored.match_reasons.join('\n')
-        : '',
-      jobTitle: jobTitle || null,
-      company: company || null,
-      usage: {
-        count: count + 1,
-        limit: isPro ? 'unlimited' : 5,
-      },
-    });
+  resume: normalizedMode === 'resume' ? resumeText : '',
+  coverLetter: normalizedMode === 'cover_letter' ? coverLetter : '',
+  matchScore: normalizedMode === 'resume' ? matchScore : null,
+  matchReasons: normalizedMode === 'resume' ? matchReasons : '',
+  jobTitle: jobTitle || null,
+  company: company || null,
+  applyUrl: applyUrl || null,
+  mode: normalizedMode,
+  usage: {
+    count: count + 1,
+    limit: isPro ? 'unlimited' : 5,
+  },
+});
   } catch (err) {
     console.error('TAILOR ERROR:', err);
     return NextResponse.json(
@@ -241,55 +305,105 @@ function formatResumeAsText(r) {
   const lines = [];
 
   if (r?.name) {
-    lines.push(r.name);
-    lines.push('');
+    lines.push(r.name.trim());
   }
+
+  const contactParts = [
+    r?.contact?.email,
+    r?.contact?.phone,
+    r?.contact?.address,
+    r?.contact?.linkedin,
+    r?.contact?.portfolio,
+  ].filter(Boolean);
+
+  if (contactParts.length) {
+    lines.push(contactParts.join(' | '));
+  }
+
+  lines.push('');
 
   if (r?.summary) {
     lines.push('SUMMARY');
-    lines.push('─'.repeat(40));
-    lines.push(r.summary);
+    lines.push(r.summary.trim());
     lines.push('');
   }
 
   if (Array.isArray(r?.skills) && r.skills.length) {
     lines.push('SKILLS');
-    lines.push('─'.repeat(40));
-    lines.push(r.skills.join(' · '));
+
+    const skillGroups = chunkArray(r.skills, 4);
+    skillGroups.forEach((group) => {
+      lines.push(`- ${group.join(' | ')}`);
+    });
+
     lines.push('');
   }
 
   if (Array.isArray(r?.experience) && r.experience.length) {
-    lines.push('EXPERIENCE');
-    lines.push('─'.repeat(40));
-    r.experience.forEach((exp) => {
-      lines.push(
-        `${exp.title || ''}${exp.company ? ' — ' + exp.company : ''}${exp.years ? ' (' + exp.years + ')' : ''}`
-      );
-      if (Array.isArray(exp.bullets)) {
-        exp.bullets.forEach((b) => lines.push(`• ${b}`));
+  lines.push('EXPERIENCE');
+
+  r.experience.forEach((exp) => {
+    const title = exp.title?.trim() || '';
+    const company = exp.company?.trim() || '';
+    const years = exp.years?.trim() || '';
+
+    const heading =
+      `${title}${company ? ' || ' + company : ''}${years ? ' || ' + years : ''}`.trim();
+
+    if (heading) lines.push(heading);
+
+    if (Array.isArray(exp.bullets)) {
+      exp.bullets.forEach((b) => lines.push(`- ${b.trim()}`));
+    }
+
+    lines.push('');
+  });
+}
+
+  if (Array.isArray(r?.projects) && r.projects.length) {
+    lines.push('PROJECTS');
+
+    r.projects.forEach((project) => {
+      if (project?.name) lines.push(project.name.trim());
+
+      if (Array.isArray(project?.details)) {
+        project.details
+          .filter(Boolean)
+          .slice(0, 3)
+          .forEach((d) => lines.push(`- ${d.trim()}`));
       }
+
       lines.push('');
     });
   }
 
   if (Array.isArray(r?.education) && r.education.length) {
     lines.push('EDUCATION');
-    lines.push('─'.repeat(40));
+
     r.education.forEach((ed) => {
-      lines.push(
-        `${ed.degree || ''}${ed.institution ? ' — ' + ed.institution : ''}${ed.year ? ', ' + ed.year : ''}`
-      );
+      const row =
+        `${ed.degree || ''}${ed.institution ? ' - ' + ed.institution : ''}${ed.year ? ' | ' + ed.year : ''}`.trim();
+      if (row) lines.push(row);
     });
+
     lines.push('');
   }
 
   if (Array.isArray(r?.certifications) && r.certifications.filter(Boolean).length) {
     lines.push('CERTIFICATIONS');
-    lines.push('─'.repeat(40));
-    r.certifications.forEach((c) => lines.push(`• ${c}`));
+    r.certifications
+      .filter(Boolean)
+      .forEach((c) => lines.push(`- ${c.trim()}`));
     lines.push('');
   }
 
-  return lines.join('\n').trim();
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
 }

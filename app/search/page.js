@@ -14,6 +14,7 @@ export default function SearchPage() {
   const [company, setCompany] = useState('');
   const [jobDescription, setJobDescription] = useState('');
   const [applyUrl, setApplyUrl] = useState('');
+  const [loadingStepIndex, setLoadingStepIndex] = useState(0);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLocation, setSearchLocation] = useState('');
@@ -61,6 +62,25 @@ export default function SearchPage() {
     load();
   }, [supabase]);
 
+  useEffect(() => {
+    if (!isTailoring) {
+      setLoadingStepIndex(0);
+      return;
+    }
+
+    const stepsCount = tailorAction === 'cover_letter' ? 5 : 4;
+    setLoadingStepIndex(0);
+
+    const interval = setInterval(() => {
+      setLoadingStepIndex((prev) => {
+        if (prev >= stepsCount - 1) return prev;
+        return prev + 1;
+      });
+    }, 1400);
+
+    return () => clearInterval(interval);
+  }, [isTailoring, tailorAction]);
+
   async function handleSearchJobs() {
     if (!searchQuery.trim()) return;
 
@@ -72,6 +92,7 @@ export default function SearchPage() {
     setJobDetailsError('');
     setTailorResult(null);
     setTailorError('');
+    closeDownloadMenu();
 
     try {
       const res = await fetch('/api/search-jobs', {
@@ -106,6 +127,8 @@ export default function SearchPage() {
     setJobDetailsError('');
     setTailorResult(null);
     setTailorError('');
+    setActiveResultTab('resume');
+    closeDownloadMenu();
 
     if (!job?.jobId) {
       setJobDetails(job);
@@ -119,7 +142,6 @@ export default function SearchPage() {
       const json = await res.json();
 
       if (!res.ok) throw new Error(json.error || 'Failed to fetch full job details');
-
       setJobDetails(json.job || null);
     } catch (err) {
       setJobDetailsError(err.message || 'Could not load full job description.');
@@ -129,22 +151,13 @@ export default function SearchPage() {
     }
   }
 
-  function getApplyUrl(job) {
-    return (
-      job?.url ||
-      job?.jobUrl ||
-      job?.applyUrl ||
-      job?.job_apply_link ||
-      job?.applicationUrl ||
-      ''
-    );
-  }
-
   async function handleTailor(source = 'selected', mode = 'resume') {
     setTailorError('');
     setTailorResult(null);
     setIsTailoring(true);
     setTailorAction(mode);
+    setCopied(false);
+    closeDownloadMenu();
 
     try {
       let jd = '';
@@ -154,10 +167,25 @@ export default function SearchPage() {
 
       if (source === 'selected') {
         if (!selectedJob) throw new Error('Please select a job first.');
-        jd = activeFullJD || selectedJob.description || '';
-        title = jobDetails?.title || selectedJob.title || '';
-        comp = jobDetails?.company || selectedJob.company || '';
-        finalApplyUrl = getApplyUrl(jobDetails) || getApplyUrl(selectedJob);
+
+        jd =
+          jobDetails?.description ||
+          selectedJob?.description ||
+          selectedJob?.descriptionPreview ||
+          '';
+
+        title = jobDetails?.title || selectedJob?.title || '';
+        comp = jobDetails?.company || selectedJob?.company || '';
+        finalApplyUrl =
+          jobDetails?.applyUrl ||
+          jobDetails?.job_apply_link ||
+          jobDetails?.jobUrl ||
+          jobDetails?.url ||
+          selectedJob?.applyUrl ||
+          selectedJob?.job_apply_link ||
+          selectedJob?.jobUrl ||
+          selectedJob?.url ||
+          '';
       } else {
         jd = jobDescription.trim();
         title = jobTitle.trim();
@@ -183,13 +211,25 @@ export default function SearchPage() {
       });
 
       const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Tailoring failed');
 
-      if (!res.ok) {
-        throw new Error(json.error || 'Tailoring failed');
+      if (mode === 'resume') {
+        setTailorResult({
+          ...json,
+          resume: json.resume || '',
+          coverLetter: '',
+          applyUrl: json.applyUrl || finalApplyUrl || '',
+        });
+        setActiveResultTab('resume');
+      } else {
+        setTailorResult({
+          ...json,
+          resume: '',
+          coverLetter: json.coverLetter || '',
+          applyUrl: json.applyUrl || finalApplyUrl || '',
+        });
+        setActiveResultTab('cover');
       }
-
-      setTailorResult(json);
-      setActiveResultTab(mode === 'cover_letter' ? 'cover' : 'resume');
     } catch (err) {
       setTailorError(err.message || 'Something went wrong');
     } finally {
@@ -221,8 +261,12 @@ export default function SearchPage() {
 
       const baseName =
         type === 'resume'
-          ? `resume-${(tailorResult?.jobTitle || jobTitle || 'tailored').toLowerCase().replace(/\s+/g, '-')}`
-          : `cover-letter-${(tailorResult?.company || company || 'tailored').toLowerCase().replace(/\s+/g, '-')}`;
+          ? `resume-${(tailorResult?.jobTitle || jobTitle || jobDetails?.title || selectedJob?.title || 'tailored')
+              .toLowerCase()
+              .replace(/\s+/g, '-')}`
+          : `cover-letter-${(tailorResult?.company || company || jobDetails?.company || selectedJob?.company || 'tailored')
+              .toLowerCase()
+              .replace(/\s+/g, '-')}`;
 
       setIsExporting(true);
 
@@ -262,14 +306,50 @@ export default function SearchPage() {
   const activeFullJD =
     activeTab === 'paste'
       ? jobDescription
-      : jobDetails?.description || selectedJob?.descriptionPreview || selectedJob?.description || '';
+      : jobDetails?.description ||
+        selectedJob?.description ||
+        selectedJob?.descriptionPreview ||
+        '';
 
   const currentApplyUrl =
     activeTab === 'paste'
       ? applyUrl.trim()
-      : getApplyUrl(jobDetails) || getApplyUrl(selectedJob);
+      : jobDetails?.applyUrl ||
+        jobDetails?.job_apply_link ||
+        jobDetails?.jobUrl ||
+        jobDetails?.url ||
+        selectedJob?.applyUrl ||
+        selectedJob?.job_apply_link ||
+        selectedJob?.jobUrl ||
+        selectedJob?.url ||
+        '';
 
-  const showMatchScore = !!tailorResult?.matchScore && tailorResult.matchScore >= 65;
+  const resultApplyUrl = tailorResult?.applyUrl || currentApplyUrl || '';
+  const showMatchScore =
+    tailorResult?.matchScore !== undefined && tailorResult?.matchScore !== null;
+
+  const currentResultText =
+    activeResultTab === 'resume'
+      ? tailorResult?.resume
+      : activeResultTab === 'cover'
+      ? tailorResult?.coverLetter
+      : tailorResult?.matchReasons;
+
+  const loadingSteps =
+    tailorAction === 'cover_letter'
+      ? [
+          'Parsing job description',
+          'Extracting keywords',
+          'Aligning your experience',
+          'Writing cover letter',
+          'Final polishing',
+        ]
+      : [
+          'Parsing job description',
+          'Extracting keywords',
+          'Rewriting summary',
+          'Tailoring experience',
+        ];
 
   return (
     <>
@@ -352,10 +432,9 @@ export default function SearchPage() {
           background: rgba(255,255,255,0.08);
           border-color: rgba(255,255,255,0.18);
         }
-        .btn-primary:disabled, .btn-secondary:disabled, .action-btn:disabled, .btn-ghost.disabled-link {
+        .btn-primary:disabled, .btn-secondary:disabled, .action-btn:disabled {
           opacity: 0.5;
           cursor: not-allowed;
-          pointer-events: none;
         }
         .layout {
           max-width: 1440px;
@@ -450,8 +529,9 @@ export default function SearchPage() {
         .action-row {
           display: flex;
           gap: 10px;
-          margin-top: 8px;
           flex-wrap: wrap;
+          margin-top: 10px;
+          margin-bottom: 4px;
         }
         .error-box {
           margin-top: 14px;
@@ -597,6 +677,7 @@ export default function SearchPage() {
           gap: 0;
           border-bottom: 1px solid rgba(255,255,255,0.07);
           margin-bottom: 20px;
+          flex-wrap: wrap;
         }
         .result-tab {
           padding: 10px 18px;
@@ -628,6 +709,12 @@ export default function SearchPage() {
           background: rgba(52,211,153,0.1);
           color: #34d399;
           border: 1px solid rgba(52,211,153,0.2);
+        }
+        .action-apply {
+          background: rgba(251,191,36,0.12);
+          color: #fbbf24;
+          border: 1px solid rgba(251,191,36,0.24);
+          text-decoration: none;
         }
         .action-new {
           background: rgba(255,255,255,0.05);
@@ -662,6 +749,7 @@ export default function SearchPage() {
         .empty-sub { font-size: 13px; color: #4a4a60; line-height: 1.7; max-width: 360px; }
         .loading-steps { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
         .loading-step { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #a0a0b8; }
+        .loading-step.active { color: #f0f0f5; }
         .spin {
           width: 16px;
           height: 16px;
@@ -708,9 +796,7 @@ export default function SearchPage() {
         .download-menu button:hover {
           background: rgba(255,255,255,0.06);
         }
-        .download-wrap {
-          position: relative;
-        }
+        .download-wrap { position: relative; }
         @media (max-width: 1200px) {
           .layout { grid-template-columns: 1fr; }
           .job-results-shell { grid-template-columns: 1fr; }
@@ -743,10 +829,10 @@ export default function SearchPage() {
           <a href="/app" className="brand">
             <div className="brand-mark">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="8" y1="13" x2="16" y2="13"/>
-                <line x1="8" y1="17" x2="14" y2="17"/>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="8" y1="13" x2="16" y2="13" />
+                <line x1="8" y1="17" x2="14" y2="17" />
               </svg>
             </div>
             <div>
@@ -754,6 +840,7 @@ export default function SearchPage() {
               <div style={{ color: '#6b6b85', fontSize: '12px', marginTop: 1 }}>Job Search</div>
             </div>
           </a>
+
           <div className="topbar-right">
             <a href="/app" className="btn-ghost">← Back to profile</a>
           </div>
@@ -775,13 +862,22 @@ export default function SearchPage() {
             <div className="tab-row">
               <button
                 className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`}
-                onClick={() => setActiveTab('search')}
+                onClick={() => {
+                  setActiveTab('search');
+                  setTailorError('');
+                  closeDownloadMenu();
+                }}
               >
                 Search jobs
               </button>
+
               <button
                 className={`tab-btn ${activeTab === 'paste' ? 'active' : ''}`}
-                onClick={() => setActiveTab('paste')}
+                onClick={() => {
+                  setActiveTab('paste');
+                  setTailorError('');
+                  closeDownloadMenu();
+                }}
               >
                 Paste job description
               </button>
@@ -814,10 +910,7 @@ export default function SearchPage() {
                 </div>
 
                 <div className="search-actions compact-top">
-                  <button
-                    className="btn-ghost"
-                    onClick={() => setShowMoreFilters((v) => !v)}
-                  >
+                  <button className="btn-ghost" onClick={() => setShowMoreFilters((v) => !v)}>
                     {showMoreFilters ? 'Hide more filters' : 'Show more filters'}
                   </button>
                 </div>
@@ -917,6 +1010,7 @@ export default function SearchPage() {
                       onChange={(e) => setJobTitle(e.target.value)}
                     />
                   </div>
+
                   <div className="field">
                     <label className="label">Company</label>
                     <input
@@ -932,7 +1026,7 @@ export default function SearchPage() {
                   <label className="label">Apply URL</label>
                   <input
                     className="input"
-                    placeholder="https://company.com/jobs/123"
+                    placeholder="https://company.com/jobs/..."
                     value={applyUrl}
                     onChange={(e) => setApplyUrl(e.target.value)}
                   />
@@ -965,7 +1059,7 @@ export default function SearchPage() {
                     {isTailoring && tailorAction === 'cover_letter' ? 'Working...' : 'Generate cover letter'}
                   </button>
 
-                  {applyUrl.trim() ? (
+                  {applyUrl.trim() && (
                     <a
                       href={applyUrl.trim()}
                       target="_blank"
@@ -974,8 +1068,6 @@ export default function SearchPage() {
                     >
                       Apply now
                     </a>
-                  ) : (
-                    <span className="btn-ghost disabled-link">Apply now</span>
                   )}
                 </div>
 
@@ -985,7 +1077,7 @@ export default function SearchPage() {
           </section>
 
           <section className="card result-card">
-            {activeTab === 'search' && !isSearching && !searchError && searchResults.length === 0 && !selectedJob && (
+            {activeTab === 'search' && !isSearching && !searchError && searchResults.length === 0 && !selectedJob && !tailorResult && (
               <div className="empty-state">
                 <div className="empty-icon">✦</div>
                 <div className="empty-title">Search jobs and review them here</div>
@@ -1047,14 +1139,12 @@ export default function SearchPage() {
 
                   {!!selectedJob && (
                     <>
-                      <div className="job-panel-title">
-                        {jobDetails?.title || selectedJob.title || 'Job details'}
-                      </div>
+                      <div className="job-panel-title">{jobDetails?.title || selectedJob.title || 'Job details'}</div>
 
                       <div className="job-panel-meta">
                         <span>{jobDetails?.company || selectedJob.company || 'Unknown company'}</span>
                         {(jobDetails?.location || selectedJob.location) && (
-                          <span>📍 {jobDetails?.location || selectedJob.location}</span>
+                          <span>{jobDetails?.location || selectedJob.location}</span>
                         )}
                         {(jobDetails?.type || selectedJob.type) && (
                           <span>{jobDetails?.type || selectedJob.type}</span>
@@ -1081,7 +1171,7 @@ export default function SearchPage() {
                           {isTailoring && tailorAction === 'cover_letter' ? 'Working...' : 'Generate cover letter'}
                         </button>
 
-                        {currentApplyUrl ? (
+                        {currentApplyUrl && (
                           <a
                             href={currentApplyUrl}
                             target="_blank"
@@ -1090,8 +1180,6 @@ export default function SearchPage() {
                           >
                             Apply now
                           </a>
-                        ) : (
-                          <span className="btn-ghost disabled-link">Apply now</span>
                         )}
                       </div>
 
@@ -1129,21 +1217,26 @@ export default function SearchPage() {
 
             {isTailoring && (
               <div style={{ padding: '20px 0' }}>
-                <div className="card-title" style={{ marginBottom: '6px' }}>Generating tailored application...</div>
-                <div className="card-sub" style={{ marginBottom: '28px' }}>
+                <div className="card-title" style={{ marginBottom: 6 }}>
+                  Generating tailored application...
+                </div>
+                <div className="card-sub" style={{ marginBottom: 28 }}>
                   This usually takes 15–30 seconds.
                 </div>
 
                 <div className="loading-steps">
-                  {[
-                    'Parsing job description',
-                    'Extracting keywords',
-                    'Rewriting summary',
-                    'Tailoring experience',
-                    'Writing cover letter'
-                  ].map((step, i) => (
-                    <div className="loading-step" key={i}>
-                      <div className="spin" style={{ borderTopColor: '#4f8ef7', borderColor: 'rgba(79,142,247,0.15)' }} />
+                  {loadingSteps.map((step, i) => (
+                    <div
+                      className={`loading-step ${i <= loadingStepIndex ? 'active' : ''}`}
+                      key={i}
+                    >
+                      <div
+                        className="spin"
+                        style={{
+                          borderTopColor: '#4f8ef7',
+                          borderColor: i <= loadingStepIndex ? 'rgba(79,142,247,0.28)' : 'rgba(79,142,247,0.12)',
+                        }}
+                      />
                       <span>{step}</span>
                     </div>
                   ))}
@@ -1156,9 +1249,10 @@ export default function SearchPage() {
                 <div className="result-header">
                   <div className="result-title">
                     {tailorResult.jobTitle || jobTitle || jobDetails?.title || selectedJob?.title || 'Tailored Application'}
+                    {' '}
                     {(tailorResult.company || company || jobDetails?.company || selectedJob?.company) && (
-                      <span style={{ color: '#6b6b85', fontWeight: 400, fontSize: '16px' }}>
-                        {' '}· {tailorResult.company || company || jobDetails?.company || selectedJob?.company}
+                      <span style={{ color: '#6b6b85', fontWeight: 400, fontSize: 16 }}>
+                        · {tailorResult.company || company || jobDetails?.company || selectedJob?.company}
                       </span>
                     )}
                   </div>
@@ -1167,8 +1261,8 @@ export default function SearchPage() {
                     <div className="match-badge">
                       <span
                         style={{
-                          width: '7px',
-                          height: '7px',
+                          width: 7,
+                          height: 7,
                           borderRadius: '50%',
                           background: '#34d399',
                           display: 'inline-block',
@@ -1179,19 +1273,16 @@ export default function SearchPage() {
                   )}
                 </div>
 
-                {!showMatchScore && !!tailorResult.matchScore && (
-                  <div className="info-box">
-                    Match score hidden because it is low-confidence and not useful for decision-making yet.
-                  </div>
-                )}
-
                 <div className="result-tabs">
-                  <button
-                    className={`result-tab ${activeResultTab === 'resume' ? 'active' : ''}`}
-                    onClick={() => setActiveResultTab('resume')}
-                  >
-                    Resume
-                  </button>
+                  {!!tailorResult.resume && (
+                    <button
+                      className={`result-tab ${activeResultTab === 'resume' ? 'active' : ''}`}
+                      onClick={() => setActiveResultTab('resume')}
+                    >
+                      Resume
+                    </button>
+                  )}
+
                   {!!tailorResult.coverLetter && (
                     <button
                       className={`result-tab ${activeResultTab === 'cover' ? 'active' : ''}`}
@@ -1200,7 +1291,8 @@ export default function SearchPage() {
                       Cover Letter
                     </button>
                   )}
-                  {!!tailorResult.matchReasons && showMatchScore && (
+
+                  {!!tailorResult.matchReasons && (
                     <button
                       className={`result-tab ${activeResultTab === 'match' ? 'active' : ''}`}
                       onClick={() => setActiveResultTab('match')}
@@ -1210,43 +1302,37 @@ export default function SearchPage() {
                   )}
                 </div>
 
-                {activeResultTab === 'resume' && <div className="result-text">{tailorResult.resume}</div>}
-                {activeResultTab === 'cover' && <div className="result-text">{tailorResult.coverLetter}</div>}
-                {activeResultTab === 'match' && <div className="result-text">{tailorResult.matchReasons}</div>}
+                <div className="result-text">{currentResultText || 'No output generated.'}</div>
 
                 <div className="result-actions">
                   <button
                     className="action-btn action-copy"
-                    onClick={() =>
-                      handleCopy(
-                        activeResultTab === 'resume'
-                          ? tailorResult.resume
-                          : activeResultTab === 'cover'
-                          ? tailorResult.coverLetter
-                          : tailorResult.matchReasons
-                      )
-                    }
+                    onClick={() => handleCopy(currentResultText || '')}
                   >
                     {copied ? 'Copied!' : 'Copy'}
                   </button>
 
-                  <div className="download-wrap">
-                    <button
-                      className="action-btn action-download"
-                      onClick={() => openDownloadMenu('resume')}
-                      disabled={isExporting}
-                    >
-                      {isExporting && downloadMenu.type === 'resume' ? 'Exporting...' : 'Download resume'}
-                    </button>
+                  {!!tailorResult.resume && (
+                    <div className="download-wrap">
+                      <button
+                        className="action-btn action-download"
+                        onClick={() => openDownloadMenu('resume')}
+                        disabled={isExporting}
+                      >
+                        {isExporting && downloadMenu.type === 'resume'
+                          ? 'Exporting...'
+                          : 'Download resume'}
+                      </button>
 
-                    {downloadMenu.open && downloadMenu.type === 'resume' && (
-                      <div className="download-menu">
-                        <button onClick={() => handleExport('pdf')}>Download as PDF</button>
-                        <button onClick={() => handleExport('docx')}>Download as DOCX</button>
-                        <button onClick={closeDownloadMenu}>Cancel</button>
-                      </div>
-                    )}
-                  </div>
+                      {downloadMenu.open && downloadMenu.type === 'resume' && (
+                        <div className="download-menu">
+                          <button onClick={() => handleExport('pdf')}>Download as PDF</button>
+                          <button onClick={() => handleExport('docx')}>Download as DOCX</button>
+                          <button onClick={closeDownloadMenu}>Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {!!tailorResult.coverLetter && (
                     <div className="download-wrap">
@@ -1255,7 +1341,9 @@ export default function SearchPage() {
                         onClick={() => openDownloadMenu('cover')}
                         disabled={isExporting}
                       >
-                        {isExporting && downloadMenu.type === 'cover' ? 'Exporting...' : 'Download cover letter'}
+                        {isExporting && downloadMenu.type === 'cover'
+                          ? 'Exporting...'
+                          : 'Download cover letter'}
                       </button>
 
                       {downloadMenu.open && downloadMenu.type === 'cover' && (
@@ -1266,6 +1354,17 @@ export default function SearchPage() {
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {resultApplyUrl && (
+                    <a
+                      href={resultApplyUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="action-btn action-apply"
+                    >
+                      Apply now
+                    </a>
                   )}
 
                   <button
