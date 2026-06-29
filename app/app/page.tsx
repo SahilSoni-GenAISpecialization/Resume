@@ -1,9 +1,37 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 
-const profileSections = {
+type ProfileField =
+  | 'firstName'
+  | 'lastName'
+  | 'email'
+  | 'phone'
+  | 'address'
+  | 'linkedin'
+  | 'portfolio'
+  | 'targetRole'
+  | 'preferredLocation'
+  | 'summary'
+  | 'experience'
+  | 'education'
+  | 'certifications'
+  | 'skills'
+  | 'projects'
+  | 'additionalInfo';
+
+type ProfileFormData = Record<ProfileField, string>;
+
+type SectionField = {
+  name: ProfileField;
+  label: string;
+  type: 'text' | 'email' | 'textarea';
+  required: boolean;
+};
+
+const profileSections: Record<'personal' | 'targeting' | 'resume', SectionField[]> = {
   personal: [
     { name: 'firstName', label: 'First name', type: 'text', required: true },
     { name: 'lastName', label: 'Last name', type: 'text', required: true },
@@ -28,7 +56,7 @@ const profileSections = {
   ],
 };
 
-const initialForm = {
+const initialForm: ProfileFormData = {
   firstName: '',
   lastName: '',
   email: '',
@@ -75,14 +103,14 @@ const PARSEABLE_FIELDS = new Set([
 export default function AppDashboardPage() {
   const [supabase] = useState(() => createClient());
 
-  const [user, setUser] = useState(null);
-  const [activeMode, setActiveMode] = useState('manual');
-  const [formData, setFormData] = useState(initialForm);
+  const [user, setUser] = useState<User | null>(null);
+  const [activeMode, setActiveMode] = useState<'manual' | 'upload'>('manual');
+  const [formData, setFormData] = useState<ProfileFormData>(initialForm);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [parseStatus, setParseStatus] = useState('');
-  const [resumeFile, setResumeFile] = useState(null);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [applications] = useState(sampleApplications);
   const [usage] = useState({ used: 2, limit: 5 });
@@ -147,21 +175,24 @@ export default function AppDashboardPage() {
       .filter((field) => field.required)
       .map((field) => field.name);
 
-    const completed = requiredFields.filter((field) => formData[field]?.trim()).length;
+    const completed = requiredFields.filter((fieldName) => {
+      const value = formData[fieldName];
+      return value.trim().length > 0;
+    }).length;
 
     return {
       completed,
       total: requiredFields.length,
-      percent: Math.round((completed / requiredFields.length) * 100),
+      percent: requiredFields.length > 0 ? Math.round((completed / requiredFields.length) * 100) : 0,
     };
   }, [formData]);
 
-  function handleChange(e) {
+  function handleChange(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({ ...prev, [name as ProfileField]: value }));
   }
 
-  async function handleResumeUpload(e) {
+  async function handleResumeUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -186,9 +217,12 @@ export default function AppDashboardPage() {
       }
 
       const parsed = json.data || {};
-      const safeEntries = Object.entries(parsed).filter(([key, value]) => {
-        return PARSEABLE_FIELDS.has(key) && typeof value === 'string' && value.trim() !== '';
-      });
+      const safeEntries = Object.entries(parsed).filter(
+        (entry): entry is [ProfileField, string] => {
+          const [key, value] = entry;
+          return PARSEABLE_FIELDS.has(key as ProfileField) && typeof value === 'string' && value.trim() !== '';
+        }
+      );
 
       setFormData((prev) => ({
         ...prev,
@@ -198,13 +232,14 @@ export default function AppDashboardPage() {
       setParseStatus('Resume parsed successfully. Review the fields below, then save your profile.');
     } catch (err) {
       console.error(err);
-      setParseStatus(`Error: ${err.message || 'Could not parse resume.'}`);
+      const message = err instanceof Error ? err.message : 'Could not parse resume.';
+      setParseStatus(`Error: ${message}`);
     } finally {
       setIsParsing(false);
     }
   }
 
-  async function handleSaveProfile(e) {
+  async function handleSaveProfile(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setIsSaving(true);
 
@@ -221,7 +256,7 @@ export default function AppDashboardPage() {
       let resumeFilePath = null;
 
       if (resumeFile) {
-        const fileExt = resumeFile.name.split('.').pop();
+        const fileExt = resumeFile.name.split('.').pop() ?? 'pdf';
         const fileName = `${user.id}-${Date.now()}.${fileExt}`;
         const filePath = `${user.id}/${fileName}`;
 
@@ -237,7 +272,7 @@ export default function AppDashboardPage() {
         resumeFilePath = filePath;
       }
 
-      const profilePayload = {
+      const profilePayload: Record<string, unknown> = {
         id: user.id,
         first_name: formData.firstName.trim(),
         last_name: formData.lastName.trim(),
@@ -259,7 +294,7 @@ export default function AppDashboardPage() {
       };
 
       if (resumeFilePath) {
-        profilePayload.resume_file_path = resumeFilePath;
+        (profilePayload as Record<string, unknown>).resume_file_path = resumeFilePath;
       }
 
       const { error: upsertError } = await supabase
@@ -274,7 +309,8 @@ export default function AppDashboardPage() {
       );
     } catch (error) {
       console.error(error);
-      alert(error.message || 'Something went wrong while saving.');
+      const message = error instanceof Error ? error.message : 'Something went wrong while saving.';
+      alert(message);
     } finally {
       setIsSaving(false);
     }
@@ -833,7 +869,9 @@ export default function AppDashboardPage() {
             <button className="topbar-btn" onClick={() => (window.location.href = '/')}>
               View landing page
             </button>
-
+            <a href="/dashboard" className="topbar-btn">
+              Dashboard
+            </a>
             <button className="topbar-btn" onClick={handleLogout} disabled={isLoggingOut}>
               {isLoggingOut ? 'Logging out...' : 'Logout'}
             </button>

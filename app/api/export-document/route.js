@@ -133,7 +133,7 @@ function isBulletLine(line) {
 }
 
 function isExperienceHeading(line, section) {
-  if (section !== 'EXPERIENCE') return false;
+  if (section !== 'EXPERIENCE' && section !== 'PROJECTS') return false;
   return line.includes('||');
 }
 

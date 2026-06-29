@@ -122,7 +122,7 @@ Return ONLY valid JSON in this exact shape:
   "experience": [{ "title": "", "company": "", "years": "", "bullets": [] }],
   "education": [{ "degree": "", "institution": "", "year": "" }],
   "certifications": [],
-  "projects": [{ "name": "", "details": [] }],
+  "projects": [{ "name": "", "years": "", "details": [] }],
   "match_score": 0,
   "match_reasons": []
 }
@@ -132,10 +132,20 @@ Rules:
 - Do NOT invent employers, degrees, certifications, dates, or projects.
 - Rewrite the summary, skills ordering, and experience bullets to align strongly to the job.
 - Prioritize ATS keyword alignment naturally.
-- Every experience bullet must be strong, specific, and achievement/action oriented.
+- EXPERIENCE BULLET RULES:
+  - Current/most recent role: minimum 7 bullet points
+  - Previous role (one before current): minimum 5-6 bullet points
+  - Any older roles: minimum 4-5 bullet points
+  - Every bullet must be strong, specific, and achievement/action oriented
+  - Never write fewer bullets than the minimum for each role
+  - Never pad with weak or generic bullets — every line must add value
+  - Every experience bullet must be strong, specific, and achievement/action oriented.
 - Include contact details from the candidate profile in the contact object.
 - skills must be concise, relevant, and job-targeted.
 - match_score must be realistic, not inflated, and based on actual alignment.
+- "years" must always contain the date range string, e.g. "Oct 2025 - Present"
+- Never leave "years" blank if dates are mentioned
+- Never include dates inside the "title" field
 - match_reasons must be short specific reasons for score strength or gaps.
 - Optimize as much as possible for ATS match, but never fabricate qualifications.`,
           },
@@ -331,10 +341,9 @@ function formatResumeAsText(r) {
   if (Array.isArray(r?.skills) && r.skills.length) {
     lines.push('SKILLS');
 
-    const skillGroups = chunkArray(r.skills, 4);
-    skillGroups.forEach((group) => {
-      lines.push(`- ${group.join(' | ')}`);
-    });
+    r.skills.forEach((skill) => {
+  lines.push(`- ${skill.trim()}`);
+});
 
     lines.push('');
   }
@@ -361,21 +370,26 @@ function formatResumeAsText(r) {
 }
 
   if (Array.isArray(r?.projects) && r.projects.length) {
-    lines.push('PROJECTS');
+  lines.push('PROJECTS');
 
-    r.projects.forEach((project) => {
-      if (project?.name) lines.push(project.name.trim());
+  r.projects.forEach((project) => {
+    if (project?.name) {
+      const tech = project?.tech?.trim() || '';
+      const years = project?.years?.trim() || '';
+      const heading =
+        `${project.name.trim()}${tech ? ' || ' + tech : ''}${years ? ' || ' + years : ''}`.trim();
+      lines.push(heading);
+    }
 
-      if (Array.isArray(project?.details)) {
-        project.details
-          .filter(Boolean)
-          .slice(0, 3)
-          .forEach((d) => lines.push(`- ${d.trim()}`));
-      }
+    if (Array.isArray(project?.details)) {
+      project.details
+        .filter(Boolean)
+        .forEach((d) => lines.push(`- ${d.trim()}`));
+    }
 
-      lines.push('');
-    });
-  }
+    lines.push('');
+  });
+}
 
   if (Array.isArray(r?.education) && r.education.length) {
     lines.push('EDUCATION');

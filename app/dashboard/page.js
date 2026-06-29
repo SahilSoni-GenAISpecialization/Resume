@@ -1,461 +1,622 @@
 'use client';
-import { useState, useEffect } from 'react';
+
+import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
+
+const FREE_TIER_LIMIT = 5;
+
+const STATUS_OPTIONS = ['Applied'];
+
+const STATUS_COLORS = {
+  Applied: { bg: 'rgba(79,142,247,0.12)', border: 'rgba(79,142,247,0.25)', text: '#4f8ef7' },
+  Interviewing: { bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.3)', text: '#fbbf24' },
+  Offer: { bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.3)', text: '#34d399' },
+  Rejected: { bg: 'rgba(248,113,113,0.1)', border: 'rgba(248,113,113,0.2)', text: '#f87171' },
+};
+
+function normalizeStatus(status) {
+  const value = String(status || '').trim().toLowerCase();
+
+  if (value === 'applied') return 'Applied';
+  if (value === 'interviewing' || value === 'interview') return 'Interviewing';
+  if (value === 'offer' || value === 'offered') return 'Offer';
+  if (value === 'rejected' || value === 'reject') return 'Rejected';
+
+  return 'Applied';
+}
+
+function toDisplayStatus(status) {
+  return normalizeStatus(status);
+}
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const supabase = createClient();
-
-  const [user, setUser] = useState(null);
-  const [activeSection, setActiveSection] = useState('dashboard');
-  const [profileData, setProfileData] = useState({
-    full_name: '', email: '', phone: '', location: '', linkedin: '', website: '',
-    summary: '', skills: '', experience: '', education: '', certifications: '',
-  });
-  const [isSaving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState('');
-  const [isParsing, setIsParsing] = useState(false);
-  const [parseStatus, setParseStatus] = useState('');
-  const [resumeFile, setResumeFile] = useState(null);
-  const [jobQuery, setJobQuery] = useState('');
-  const [jobLocation, setJobLocation] = useState('');
-  const [jobs, setJobs] = useState([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchError, setSearchError] = useState('');
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [isTailoring, setIsTailoring] = useState(false);
-  const [tailorResult, setTailorResult] = useState(null);
-  const [tailorError, setTailorError] = useState('');
+  const supabase = useMemo(() => createClient(), []);
+  const [profile, setProfile] = useState(null);
   const [applications, setApplications] = useState([]);
+  const [usage, setUsage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editRow, setEditRow] = useState(null);
+  const [form, setForm] = useState({
+    company: '',
+    job_title: '',
+    status: 'Applied',
+    apply_url: '',
+    notes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('All');
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) { router.push('/login'); return; }
-      setUser(user);
-      loadProfile(user.id);
-      loadApplications(user.id);
-    });
-  }, []);
+    async function load() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-  async function loadProfile(userId) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
-    if (data) setProfileData(prev => ({ ...prev, ...data }));
-  }
-
-  async function loadApplications(userId) {
-    const { data } = await supabase.from('applications').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (data) setApplications(data);
-  }
-
-  async function saveProfile() {
-    setSaving(true); setSaveMsg('');
-    const { error } = await supabase.from('profiles').upsert({ id: user.id, ...profileData, updated_at: new Date().toISOString() });
-    setSaveMsg(error ? `Error: ${error.message}` : '✓ Profile saved successfully');
-    setSaving(false);
-    setTimeout(() => setSaveMsg(''), 3000);
-  }
-
-  async function handleResumeUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    setResumeFile(file);
-    setParseStatus('Analyzing resume...');
-    setIsParsing(true);
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch('/api/parse-resume', { method: 'POST', body: fd });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Parse failed');
-      setProfileData(prev => ({
-        ...prev,
-        ...Object.fromEntries(Object.entries(json.data).filter(([_, v]) => v && String(v).trim() !== ''))
-      }));
-      setParseStatus('✓ Resume parsed — fields filled below. Review and save.');
-    } catch (err) {
-      setParseStatus(`Error: ${err.message}`);
-    } finally {
-      setIsParsing(false);
-    }
-  }
-
-  async function searchJobs() {
-    if (!jobQuery.trim()) return;
-    setIsSearching(true); setSearchError(''); setJobs([]); setSelectedJob(null); setTailorResult(null);
-    try {
-      const res = await fetch(`/api/search-jobs?query=${encodeURIComponent(jobQuery)}&location=${encodeURIComponent(jobLocation)}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Search failed');
-      setJobs(json.jobs || []);
-      if ((json.jobs || []).length === 0) setSearchError('No jobs found. Try different keywords.');
-    } catch (err) {
-      setSearchError(err.message);
-    } finally {
-      setIsSearching(false);
-    }
-  }
-
-  async function tailorResume(job) {
-    setSelectedJob(job); setIsTailoring(true); setTailorResult(null); setTailorError('');
-    setActiveSection('tailor');
-    try {
-      const res = await fetch('/api/tailor-resume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobDescription: `${job.title} at ${job.company}\n\n${job.description}`, profileData }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Tailoring failed');
-      setTailorResult(json);
-      if (user) {
-        await supabase.from('applications').insert({
-          user_id: user.id, job_title: job.title, company: job.company,
-          job_url: job.url, match_score: json.matchScore, status: 'tailored',
-          tailored_resume: json.resume, cover_letter: json.coverLetter,
-          created_at: new Date().toISOString(),
-        });
-        loadApplications(user.id);
+      if (!user) {
+        window.location.href = '/login';
+        return;
       }
-    } catch (err) {
-      setTailorError(err.message);
-    } finally {
-      setIsTailoring(false);
+
+      const [{ data: p }, { data: apps }, { data: usg }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', user.id).single(),
+        supabase.from('applications').select('*').eq('user_id', user.id).order('applied_at', { ascending: false }),
+        supabase.from('user_usage').select('tailor_count').eq('user_id', user.id).single(),
+      ]);
+
+      setProfile(p || null);
+      setApplications(apps || []);
+      setUsage(usg?.tailor_count || 0);
+      setLoading(false);
     }
+
+    load();
+  }, [supabase]);
+
+  const now = new Date();
+
+  const thisMonthApps = applications.filter((a) => {
+    if (!a.applied_at) return false;
+    const d = new Date(a.applied_at);
+    if (Number.isNaN(d.getTime())) return false;
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+
+  const statusCounts = {
+  Applied: applications.filter((a) => normalizeStatus(a.status) === 'Applied').length,
+  Interviewing: applications.filter((a) => normalizeStatus(a.status) === 'Interviewing').length,
+  Offer: applications.filter((a) => normalizeStatus(a.status) === 'Offer').length,
+  Rejected: applications.filter((a) => normalizeStatus(a.status) === 'Rejected').length,
+};
+
+  const usagePct = Math.min((usage / FREE_TIER_LIMIT) * 100, 100);
+  const usageLeft = Math.max(FREE_TIER_LIMIT - usage, 0);
+
+  const filtered =
+  statusFilter === 'Applied this month'
+    ? thisMonthApps.filter((a) => normalizeStatus(a.status) === 'Applied')
+    : applications;
+
+  function openAdd() {
+    setEditRow(null);
+    setForm({
+      company: '',
+      job_title: '',
+      status: 'Applied',
+      apply_url: '',
+      notes: '',
+    });
+    setModalOpen(true);
   }
 
-  function downloadText(content, filename) {
-    const blob = new Blob([content], { type: 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
+  function openEdit(row) {
+    setEditRow(row);
+    setForm({
+      company: row.company || '',
+      job_title: row.job_title || '',
+      status: toDisplayStatus(row.status),
+      apply_url: row.apply_url || '',
+      notes: row.notes || '',
+    });
+    setModalOpen(true);
   }
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '▦' },
-    { id: 'profile', label: 'My Profile', icon: '◎' },
-    { id: 'search', label: 'Job Search', icon: '⊕' },
-    { id: 'tailor', label: 'Tailor Resume', icon: '✦' },
-    { id: 'applications', label: 'Applications', icon: '≡' },
-  ];
+  async function handleSave() {
+    if (!form.company.trim() || !form.job_title.trim()) return;
 
-  const s = {
-    page: { display: 'flex', minHeight: '100vh', background: '#13131a', color: '#f0f0f5', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
-    sidebar: { width: '240px', flexShrink: 0, background: '#18181f', borderRight: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', padding: '24px 0' },
-    logo: { display: 'flex', alignItems: 'center', gap: '10px', padding: '0 20px 28px', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: '12px' },
-    logoIcon: { width: '32px', height: '32px', borderRadius: '8px', background: '#4f8ef7', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    navBtn: (active) => ({ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 20px', margin: '2px 8px', borderRadius: '8px', border: 'none', background: active ? 'rgba(79,142,247,0.12)' : 'transparent', color: active ? '#4f8ef7' : '#8b8b9e', fontSize: '14px', fontWeight: active ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s', width: 'calc(100% - 16px)', textAlign: 'left' }),
-    main: { flex: 1, overflow: 'auto', padding: '32px 40px' },
-    header: { marginBottom: '32px' },
-    title: { fontSize: '24px', fontWeight: 800, marginBottom: '4px', letterSpacing: '-0.02em' },
-    subtitle: { fontSize: '14px', color: '#6b6b85' },
-    card: { background: '#1c1c26', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '24px', marginBottom: '20px' },
-    label: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#6b6b85', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.08em' },
-    input: { width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '10px 14px', fontSize: '14px', color: '#f0f0f5', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' },
-    textarea: { width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '10px 14px', fontSize: '14px', color: '#f0f0f5', fontFamily: 'inherit', outline: 'none', resize: 'vertical', boxSizing: 'border-box', lineHeight: 1.6 },
-    btnPrimary: { background: '#4f8ef7', color: 'white', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' },
-    btnGhost: { background: 'rgba(255,255,255,0.06)', color: '#c8c8d8', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' },
-    grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' },
-    statCard: { background: '#1c1c26', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '20px' },
-  };
+    setSaving(true);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const payload = {
+      company: form.company.trim(),
+      job_title: form.job_title.trim(),
+      status: toDisplayStatus(form.status),
+      apply_url: form.apply_url.trim() || null,
+      notes: form.notes.trim() || null,
+    };
+
+    if (editRow) {
+      const { data } = await supabase
+        .from('applications')
+        .update(payload)
+        .eq('id', editRow.id)
+        .select()
+        .single();
+
+      setApplications((prev) => prev.map((a) => (a.id === editRow.id ? data : a)));
+    } else {
+      const insertPayload = {
+        ...payload,
+        user_id: user.id,
+        applied_at: new Date().toISOString(),
+      };
+
+      const { data } = await supabase
+        .from('applications')
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      setApplications((prev) => [data, ...prev]);
+    }
+
+    setSaving(false);
+    setModalOpen(false);
+  }
+
+  async function handleDelete(id) {
+    await supabase.from('applications').delete().eq('id', id);
+    setApplications((prev) => prev.filter((a) => a.id !== id));
+    setDeleteId(null);
+  }
+
+  async function handleStatusChange(id, status) {
+    const displayStatus = toDisplayStatus(status);
+
+    await supabase.from('applications').update({ status: displayStatus }).eq('id', id);
+
+    setApplications((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: displayStatus } : a))
+    );
+  }
+
+  const firstName = profile?.first_name || profile?.full_name?.split(' ')?.[0] || 'there';
 
   return (
-    <div style={s.page}>
+    <>
       <style>{`
-        input:focus, textarea:focus { border-color: rgba(79,142,247,0.5) !important; }
-        button:hover { opacity: 0.88; }
-        .job-card:hover { border-color: rgba(79,142,247,0.3) !important; background: rgba(79,142,247,0.04) !important; }
-        .job-card { transition: all 0.2s; cursor: pointer; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #13131a; color: #f0f0f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .shell { min-height: 100vh; background: radial-gradient(circle at top left, rgba(105,162,255,0.07), transparent 30%), radial-gradient(circle at bottom right, rgba(139,92,246,0.05), transparent 25%), #13131a; }
+
+        .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 1px solid rgba(255,255,255,0.07); background: rgba(19,19,26,0.92); backdrop-filter: blur(20px); }
+        .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
+        .brand-mark { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, #4f8ef7, #8b5cf6); display: flex; align-items: center; justify-content: center; }
+        .brand-name { font-size: 17px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 10px; }
+        .btn-ghost { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #a0a0b8; padding: 9px 14px; font-size: 13px; font-weight: 600; border-radius: 9px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
+        .btn-ghost:hover { background: rgba(255,255,255,0.09); color: #f0f0f5; }
+        .btn-primary { background: #4f8ef7; border: none; color: white; padding: 10px 18px; font-size: 14px; font-weight: 700; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
+        .btn-primary:hover { background: #6fa3ff; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(79,142,247,0.3); }
+
+        .layout { max-width: 1280px; margin: 0 auto; padding: 36px 28px; }
+        .page-header { margin-bottom: 32px; }
+        .page-title { font-size: 26px; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 4px; }
+        .page-sub { color: #7d7d96; font-size: 14px; }
+
+        .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+        .kpi-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 20px 22px; }
+        .kpi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b85; margin-bottom: 10px; }
+        .kpi-value { font-size: 32px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; margin-bottom: 4px; }
+        .kpi-sub { font-size: 12px; color: #6b6b85; }
+        .kpi-blue { color: #4f8ef7; }
+        .kpi-green { color: #34d399; }
+        .kpi-yellow { color: #fbbf24; }
+
+        .usage-bar-wrap { margin-top: 10px; }
+        .usage-bar-track { height: 6px; border-radius: 99px; background: rgba(255,255,255,0.07); overflow: hidden; }
+        .usage-bar-fill { height: 100%; border-radius: 99px; transition: width 0.6s ease; }
+
+        .status-row { display: flex; gap: 10px; margin-bottom: 24px; flex-wrap: wrap; align-items: center; }
+        .status-pill { padding: 6px 14px; border-radius: 99px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid transparent; transition: all 0.18s; background: rgba(255,255,255,0.04); color: #7d7d96; border-color: rgba(255,255,255,0.08); }
+        .status-pill:hover { background: rgba(255,255,255,0.07); color: #f0f0f5; }
+        .status-pill.active { background: rgba(79,142,247,0.15); color: #4f8ef7; border-color: rgba(79,142,247,0.3); }
+        .status-pill-count { margin-left: 5px; opacity: 0.7; }
+
+        .table-card { background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; overflow: hidden; }
+        .table-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+        .table-title { font-size: 16px; font-weight: 700; }
+        .table-count { font-size: 12px; color: #6b6b85; font-weight: 600; }
+        table { width: 100%; border-collapse: collapse; }
+        thead th { padding: 12px 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b85; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        tbody tr { border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s; }
+        tbody tr:last-child { border-bottom: none; }
+        tbody tr:hover { background: rgba(255,255,255,0.02); }
+        tbody td { padding: 14px 20px; font-size: 13px; vertical-align: middle; }
+        .td-company { font-weight: 700; color: #f0f0f5; }
+        .td-role { color: #c8c8d8; }
+        .td-date { color: #6b6b85; font-size: 12px; white-space: nowrap; }
+        .td-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+        .status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+        .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+        .status-select { background: transparent; border: none; font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit; outline: none; padding: 4px 10px; border-radius: 99px; appearance: none; -webkit-appearance: none; }
+
+        .icon-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; color: #a0a0b8; transition: all 0.18s; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; }
+        .icon-btn:hover { background: rgba(255,255,255,0.08); color: #f0f0f5; }
+        .icon-btn.danger:hover { background: rgba(248,113,113,0.1); color: #f87171; border-color: rgba(248,113,113,0.2); }
+        .icon-btn.edit:hover { background: rgba(79,142,247,0.1); color: #4f8ef7; border-color: rgba(79,142,247,0.2); }
+
+        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 64px 32px; color: #4a4a60; }
+        .empty-icon { font-size: 36px; margin-bottom: 14px; opacity: 0.5; }
+        .empty-title { font-size: 16px; font-weight: 600; color: #6b6b85; margin-bottom: 6px; }
+        .empty-sub { font-size: 13px; color: #4a4a60; line-height: 1.7; max-width: 320px; margin-bottom: 20px; }
+
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(6px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .modal { background: #1a1a24; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 28px; width: 100%; max-width: 480px; box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
+        .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 22px; }
+        .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+        .label { font-size: 11px; font-weight: 700; color: #c8c8d8; text-transform: uppercase; letter-spacing: 0.06em; }
+        .input, .select-input, .textarea-input { width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #f0f0f5; border-radius: 10px; padding: 11px 13px; font-size: 14px; outline: none; font-family: inherit; transition: all 0.2s; }
+        .input::placeholder, .textarea-input::placeholder { color: #4a4a60; }
+        .input:focus, .select-input:focus, .textarea-input:focus { border-color: rgba(79,142,247,0.5); box-shadow: 0 0 0 3px rgba(79,142,247,0.1); }
+        .textarea-input { resize: vertical; min-height: 80px; line-height: 1.6; }
+        .modal-actions { display: flex; gap: 10px; margin-top: 6px; justify-content: flex-end; }
+        .btn-cancel { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #a0a0b8; padding: 10px 18px; font-size: 14px; font-weight: 600; border-radius: 9px; cursor: pointer; font-family: inherit; transition: all 0.2s; }
+        .btn-cancel:hover { background: rgba(255,255,255,0.08); color: #f0f0f5; }
+
+        .confirm-bar { background: rgba(248,113,113,0.07); border: 1px solid rgba(248,113,113,0.18); border-radius: 12px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+        .confirm-text { font-size: 13px; color: #f87171; }
+        .confirm-actions { display: flex; gap: 8px; }
+        .btn-danger { background: rgba(248,113,113,0.15); border: 1px solid rgba(248,113,113,0.3); color: #f87171; padding: 7px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; font-family: inherit; transition: all 0.18s; }
+        .btn-danger:hover { background: rgba(248,113,113,0.25); }
+
+        .spin { width: 16px; height: 16px; border: 2px solid rgba(79,142,247,0.2); border-top-color: #4f8ef7; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .apply-link { color: #4f8ef7; text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
+        .apply-link:hover { text-decoration: underline; }
+
+        @media (max-width: 900px) {
+          .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 600px) {
+          .kpi-grid { grid-template-columns: 1fr 1fr; }
+          .layout { padding: 20px 16px; }
+          .topbar { padding: 14px 16px; }
+          thead th:nth-child(4), tbody td:nth-child(4) { display: none; }
+        }
       `}</style>
 
-      <aside style={s.sidebar}>
-        <div style={s.logo}>
-          <div style={s.logoIcon}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
+      <div className="shell">
+        <nav className="topbar">
+          <a href="/app" className="brand">
+            <div className="brand-mark">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="8" y1="13" x2="16" y2="13" />
+                <line x1="8" y1="17" x2="14" y2="17" />
+              </svg>
+            </div>
+            <div className="brand-name">Applymatic</div>
+          </a>
+
+          <div className="topbar-right">
+            <a href="/search" className="btn-ghost">Job search</a>
+            <a href="/app" className="btn-ghost">Profile</a>
           </div>
-          <span style={{ fontWeight: 700, fontSize: '16px' }}>Applymatic</span>
-        </div>
-        <nav style={{ flex: 1 }}>
-          {navItems.map(item => (
-            <button key={item.id} style={s.navBtn(activeSection === item.id)} onClick={() => setActiveSection(item.id)}>
-              <span style={{ fontSize: '16px' }}>{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
         </nav>
-        <div style={{ padding: '0 8px', marginTop: 'auto' }}>
-          <div style={{ padding: '12px', margin: '0 0 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <p style={{ fontSize: '11px', color: '#6b6b85', marginBottom: '2px' }}>Signed in as</p>
-            <p style={{ fontSize: '12px', color: '#a0a0b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</p>
-          </div>
-          <button style={{ ...s.btnGhost, width: '100%', fontSize: '13px', padding: '8px' }}
-            onClick={async () => { await supabase.auth.signOut(); router.push('/login'); }}>
-            Sign out
-          </button>
-        </div>
-      </aside>
 
-      <main style={s.main}>
-        {activeSection === 'dashboard' && (
-          <div>
-            <div style={s.header}>
-              <h1 style={s.title}>Welcome back{profileData.full_name ? `, ${profileData.full_name.split(' ')[0]}` : ''} 👋</h1>
-              <p style={s.subtitle}>Here's a summary of your job search activity.</p>
+        <main className="layout">
+          <div className="page-header">
+            <div className="page-title">
+              {loading ? 'Dashboard' : `Welcome back, ${firstName} 👋`}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '28px' }}>
-              {[
-                { label: 'Applications', value: applications.length, color: '#4f8ef7' },
-                { label: 'Avg Match Score', value: applications.length ? Math.round(applications.reduce((a, b) => a + (b.match_score || 0), 0) / applications.length) + '%' : '—', color: '#34d399' },
-                { label: 'This Month', value: applications.filter(a => new Date(a.created_at) > new Date(Date.now() - 30 * 86400000)).length, color: '#a78bfa' },
-                { label: 'Free Resumes Left', value: Math.max(0, 5 - applications.filter(a => new Date(a.created_at) > new Date(Date.now() - 30 * 86400000)).length), color: '#fbbf24' },
-              ].map((stat, i) => (
-                <div key={i} style={s.statCard}>
-                  <p style={{ fontSize: '28px', fontWeight: 800, color: stat.color, marginBottom: '4px' }}>{stat.value}</p>
-                  <p style={{ fontSize: '12px', color: '#6b6b85' }}>{stat.label}</p>
-                </div>
-              ))}
+            <div className="page-sub">
+              Track every application, monitor your free tier usage, and stay on top of your job hunt.
             </div>
-            <div style={s.card}>
-              <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>Quick Actions</h2>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <button style={s.btnPrimary} onClick={() => setActiveSection('search')}>⊕ Search Jobs</button>
-                <button style={s.btnGhost} onClick={() => setActiveSection('profile')}>◎ Update Profile</button>
-                <button style={s.btnGhost} onClick={() => setActiveSection('applications')}>≡ View Applications</button>
-              </div>
-            </div>
-            {applications.length > 0 ? (
-              <div style={s.card}>
-                <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>Recent Applications</h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {applications.slice(0, 5).map((app, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div>
-                        <p style={{ fontSize: '14px', fontWeight: 600, marginBottom: '2px' }}>{app.job_title}</p>
-                        <p style={{ fontSize: '12px', color: '#6b6b85' }}>{app.company}</p>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {app.match_score && <span style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399', border: '1px solid rgba(52,211,153,0.2)', borderRadius: '99px', padding: '3px 10px', fontSize: '12px', fontWeight: 600 }}>{app.match_score}% match</span>}
-                        <span style={{ fontSize: '11px', color: '#6b6b85' }}>{new Date(app.created_at).toLocaleDateString()}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div style={{ ...s.card, textAlign: 'center', padding: '48px' }}>
-                <p style={{ fontSize: '36px', marginBottom: '12px' }}>🚀</p>
-                <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>No applications yet</p>
-                <p style={{ fontSize: '14px', color: '#6b6b85', marginBottom: '20px' }}>Search for jobs and tailor your resume to get started.</p>
-                <button style={s.btnPrimary} onClick={() => setActiveSection('search')}>Search Jobs →</button>
-              </div>
-            )}
           </div>
-        )}
 
-        {activeSection === 'profile' && (
-          <div>
-            <div style={s.header}>
-              <h1 style={s.title}>My Profile</h1>
-              <p style={s.subtitle}>Your info is used to tailor every resume and cover letter.</p>
+          <div className="kpi-grid">
+            <div className="kpi-card">
+              <div className="kpi-label">Total applications</div>
+              <div className="kpi-value kpi-blue">{loading ? '—' : applications.length}</div>
+              <div className="kpi-sub">all time</div>
             </div>
-            <div style={s.card}>
-              <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '6px' }}>Upload your existing resume</h2>
-              <p style={{ fontSize: '13px', color: '#6b6b85', marginBottom: '16px' }}>Upload a PDF or DOCX to auto-fill your profile fields below.</p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                <label style={{ ...s.btnPrimary, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                  {isParsing ? 'Parsing...' : 'Choose file'}
-                  <input type="file" accept=".pdf,.docx,.doc" style={{ display: 'none' }} onChange={handleResumeUpload} disabled={isParsing} />
-                </label>
-                {resumeFile && <span style={{ fontSize: '13px', color: '#a0a0b8' }}>Selected: {resumeFile.name}</span>}
-              </div>
-              {parseStatus && (
-                <p style={{ marginTop: '12px', fontSize: '13px', color: parseStatus.startsWith('✓') ? '#34d399' : parseStatus.startsWith('Error') ? '#f87171' : '#fbbf24', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>{parseStatus}</p>
-              )}
+
+            <div className="kpi-card">
+              <div className="kpi-label">This month</div>
+              <div className="kpi-value kpi-green">{loading ? '—' : thisMonthApps.length}</div>
+              <div className="kpi-sub">{new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</div>
             </div>
-            <div style={s.card}>
-              <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '20px' }}>Personal Information</h2>
-              <div style={{ ...s.grid2, marginBottom: '16px' }}>
-                {[['full_name','Full Name'],['email','Email'],['phone','Phone'],['location','Location'],['linkedin','LinkedIn URL'],['website','Website / Portfolio']].map(([key, label]) => (
-                  <div key={key}>
-                    <label style={s.label}>{label}</label>
-                    <input style={s.input} value={profileData[key] || ''} onChange={e => setProfileData(p => ({ ...p, [key]: e.target.value }))} placeholder={label} />
-                  </div>
-                ))}
+
+
+            <div className="kpi-card">
+              <div className="kpi-label">Free tier usage</div>
+              <div className="kpi-value" style={{ color: usagePct >= 80 ? '#f87171' : '#34d399', fontSize: 28 }}>
+                {loading ? '—' : `${usage} / ${FREE_TIER_LIMIT}`}
               </div>
-              {[
-                ['summary', 'Professional Summary', 100, 'Brief professional summary...'],
-                ['skills', 'Skills (comma-separated)', 80, 'React, Node.js, TypeScript, AWS...'],
-                ['experience', 'Work Experience', 160, 'List your work experience...'],
-                ['education', 'Education', 100, 'Degrees, institutions, graduation years...'],
-                ['certifications', 'Certifications', 80, 'Certifications, licenses, courses...'],
-              ].map(([key, label, height, placeholder]) => (
-                <div key={key} style={{ marginBottom: '16px' }}>
-                  <label style={s.label}>{label}</label>
-                  <textarea style={{ ...s.textarea, minHeight: `${height}px` }} value={profileData[key] || ''} onChange={e => setProfileData(p => ({ ...p, [key]: e.target.value }))} placeholder={placeholder} />
+              <div className="usage-bar-wrap">
+                <div className="usage-bar-track">
+                  <div
+                    className="usage-bar-fill"
+                    style={{
+                      width: loading ? '0%' : `${usagePct}%`,
+                      background:
+                        usagePct >= 80
+                          ? 'linear-gradient(90deg, #f87171, #ef4444)'
+                          : 'linear-gradient(90deg, #34d399, #4f8ef7)',
+                    }}
+                  />
                 </div>
-              ))}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
-                <button style={s.btnPrimary} onClick={saveProfile} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Profile'}</button>
-                {saveMsg && <p style={{ fontSize: '13px', color: saveMsg.startsWith('✓') ? '#34d399' : '#f87171' }}>{saveMsg}</p>}
+                <div className="kpi-sub" style={{ marginTop: 6 }}>
+                  {loading ? '' : usageLeft > 0 ? `${usageLeft} tailors remaining` : 'Limit reached — upgrade to continue'}
+                </div>
               </div>
             </div>
           </div>
-        )}
 
-        {activeSection === 'search' && (
-          <div>
-            <div style={s.header}>
-              <h1 style={s.title}>Job Search</h1>
-              <p style={s.subtitle}>Search live job listings and tailor your resume in one click.</p>
-            </div>
-            <div style={s.card}>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <div style={{ flex: 2, minWidth: '200px' }}>
-                  <label style={s.label}>Job Title / Keywords</label>
-                  <input style={s.input} value={jobQuery} onChange={e => setJobQuery(e.target.value)} placeholder="e.g. Frontend Developer" onKeyDown={e => e.key === 'Enter' && searchJobs()} />
-                </div>
-                <div style={{ flex: 1, minWidth: '150px' }}>
-                  <label style={s.label}>Location</label>
-                  <input style={s.input} value={jobLocation} onChange={e => setJobLocation(e.target.value)} placeholder="e.g. Toronto, ON" onKeyDown={e => e.key === 'Enter' && searchJobs()} />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                  <button style={s.btnPrimary} onClick={searchJobs} disabled={isSearching}>{isSearching ? 'Searching...' : '⊕ Search'}</button>
-                </div>
-              </div>
-            </div>
-            {searchError && <p style={{ color: '#f87171', fontSize: '14px', marginBottom: '16px', padding: '12px 16px', background: 'rgba(248,113,113,0.08)', borderRadius: '8px', border: '1px solid rgba(248,113,113,0.2)' }}>{searchError}</p>}
-            {isSearching && (
-              <div style={{ textAlign: 'center', padding: '48px', color: '#6b6b85' }}>
-                <p style={{ fontSize: '24px', marginBottom: '8px' }}>⊕</p>
-                <p>Searching live listings...</p>
-              </div>
-            )}
-            {!isSearching && jobs.length === 0 && !searchError && (
-              <div style={{ textAlign: 'center', padding: '64px', color: '#6b6b85' }}>
-                <p style={{ fontSize: '40px', marginBottom: '12px' }}>🔍</p>
-                <p style={{ fontSize: '15px', fontWeight: 600, color: '#a0a0b8', marginBottom: '6px' }}>Search for your next opportunity</p>
-                <p style={{ fontSize: '13px' }}>Enter a job title and location above to find live listings.</p>
-              </div>
-            )}
-            {jobs.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <p style={{ fontSize: '13px', color: '#6b6b85', marginBottom: '4px' }}>{jobs.length} jobs found</p>
-                {jobs.map((job, i) => (
-                  <div key={i} className="job-card" style={{ ...s.card, marginBottom: 0, border: '1px solid rgba(255,255,255,0.07)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
-                      <div style={{ flex: 1 }}>
-                        <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>{job.title}</h3>
-                        <p style={{ fontSize: '14px', color: '#a0a0b8', marginBottom: '8px' }}>{job.company}{job.location ? ` · ${job.location}` : ''}</p>
-                        {job.description && <p style={{ fontSize: '13px', color: '#6b6b85', lineHeight: 1.6, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{job.description}</p>}
-                      </div>
-                      <button style={{ ...s.btnPrimary, flexShrink: 0, fontSize: '13px', padding: '8px 16px' }} onClick={() => tailorResume(job)}>✦ Tailor Resume</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeSection === 'tailor' && (
-          <div>
-            <div style={s.header}>
-              <h1 style={s.title}>Tailor Resume</h1>
-              <p style={s.subtitle}>{selectedJob ? `Tailoring for: ${selectedJob.title} at ${selectedJob.company}` : 'Select a job from Job Search to tailor your resume.'}</p>
-            </div>
-            {isTailoring && (
-              <div style={{ ...s.card, textAlign: 'center', padding: '64px' }}>
-                <p style={{ fontSize: '32px', marginBottom: '16px' }}>✦</p>
-                <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>AI is tailoring your resume...</p>
-                <p style={{ fontSize: '13px', color: '#6b6b85' }}>Matching keywords, rewriting bullets, crafting cover letter</p>
-              </div>
-            )}
-            {tailorError && <p style={{ color: '#f87171', fontSize: '14px', marginBottom: '16px', padding: '12px 16px', background: 'rgba(248,113,113,0.08)', borderRadius: '8px', border: '1px solid rgba(248,113,113,0.2)' }}>{tailorError}</p>}
-            {tailorResult && !isTailoring && (
+          <div className="table-card">
+            <div className="table-header">
               <div>
-                <div style={{ ...s.card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
-                  <div>
-                    <p style={{ fontSize: '13px', color: '#6b6b85', marginBottom: '4px' }}>Match Score</p>
-                    <p style={{ fontSize: '36px', fontWeight: 800, color: '#34d399' }}>{tailorResult.matchScore}%</p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <button style={s.btnPrimary} onClick={() => downloadText(tailorResult.resume, `resume-${selectedJob?.company || 'tailored'}.txt`)}>↓ Download Resume</button>
-                    {tailorResult.coverLetter && <button style={s.btnGhost} onClick={() => downloadText(tailorResult.coverLetter, `cover-letter-${selectedJob?.company || 'tailored'}.txt`)}>↓ Cover Letter</button>}
-                  </div>
-                </div>
-                <div style={s.card}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                    <h2 style={{ fontSize: '16px', fontWeight: 700 }}>Tailored Resume</h2>
-                    <button style={{ ...s.btnGhost, fontSize: '12px', padding: '6px 12px' }} onClick={() => downloadText(tailorResult.resume, `resume-${selectedJob?.company || 'tailored'}.txt`)}>↓ Download</button>
-                  </div>
-                  <pre style={{ fontSize: '13px', color: '#c8c8d8', lineHeight: 1.7, whiteSpace: 'pre-wrap', background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', maxHeight: '400px', overflow: 'auto' }}>{tailorResult.resume}</pre>
-                </div>
-                {tailorResult.coverLetter && (
-                  <div style={s.card}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                      <h2 style={{ fontSize: '16px', fontWeight: 700 }}>Cover Letter</h2>
-                      <button style={{ ...s.btnGhost, fontSize: '12px', padding: '6px 12px' }} onClick={() => downloadText(tailorResult.coverLetter, `cover-letter-${selectedJob?.company || 'tailored'}.txt`)}>↓ Download</button>
-                    </div>
-                    <pre style={{ fontSize: '13px', color: '#c8c8d8', lineHeight: 1.7, whiteSpace: 'pre-wrap', background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', maxHeight: '400px', overflow: 'auto' }}>{tailorResult.coverLetter}</pre>
-                  </div>
+                <div className="table-title">Applications</div>
+                <div className="table-count">
+  {filtered.length} {statusFilter === 'All' ? 'total' : 'applied this month'}
+</div>
+              </div>
+              <button className="btn-primary" onClick={openAdd}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Add application
+              </button>
+            </div>
+
+            <div style={{ padding: '14px 20px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="status-row">
+                {[
+  { label: 'All', count: applications.length },
+  {
+    label: 'Applied this month',
+    count: thisMonthApps.filter((a) => normalizeStatus(a.status) === 'Applied').length,
+  },
+].map((item) => (
+  <button
+    key={item.label}
+    className={`status-pill${statusFilter === item.label ? ' active' : ''}`}
+    onClick={() => setStatusFilter(item.label)}
+    style={
+      statusFilter === item.label && item.label !== 'All'
+        ? {
+            background: STATUS_COLORS.Applied.bg,
+            borderColor: STATUS_COLORS.Applied.border,
+            color: STATUS_COLORS.Applied.text,
+          }
+        : {}
+    }
+  >
+    {item.label}
+    <span className="status-pill-count">{item.count}</span>
+  </button>
+))}
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="empty-state">
+                <div className="spin" style={{ width: 24, height: 24, marginBottom: 16 }} />
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">📋</div>
+                <div className="empty-title">
+  {statusFilter === 'All' ? 'No applications yet' : 'No applied applications this month'}
+</div>
+<div className="empty-sub">
+  {statusFilter === 'All'
+    ? 'Start tracking your job applications here. Add one manually or apply directly from the job search.'
+    : 'No applications with Applied status were added this month.'}
+</div>
+                {statusFilter === 'All' && (
+                  <button className="btn-primary" onClick={openAdd}>Add first application</button>
                 )}
               </div>
-            )}
-            {!selectedJob && !isTailoring && !tailorResult && (
-              <div style={{ textAlign: 'center', padding: '64px', color: '#6b6b85' }}>
-                <p style={{ fontSize: '40px', marginBottom: '12px' }}>✦</p>
-                <p style={{ fontSize: '15px', fontWeight: 600, color: '#a0a0b8', marginBottom: '6px' }}>No job selected</p>
-                <p style={{ fontSize: '13px', marginBottom: '20px' }}>Go to Job Search, find a role, and click "Tailor Resume".</p>
-                <button style={s.btnPrimary} onClick={() => setActiveSection('search')}>Go to Job Search →</button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeSection === 'applications' && (
-          <div>
-            <div style={s.header}>
-              <h1 style={s.title}>Applications</h1>
-              <p style={s.subtitle}>All your tailored resumes and applications in one place.</p>
-            </div>
-            {applications.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '64px', color: '#6b6b85' }}>
-                <p style={{ fontSize: '40px', marginBottom: '12px' }}>📋</p>
-                <p style={{ fontSize: '15px', fontWeight: 600, color: '#a0a0b8', marginBottom: '6px' }}>No applications yet</p>
-                <p style={{ fontSize: '13px', marginBottom: '20px' }}>Tailor your resume for a job to see it here.</p>
-                <button style={s.btnPrimary} onClick={() => setActiveSection('search')}>Search Jobs →</button>
-              </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {applications.map((app, i) => (
-                  <div key={i} style={s.card}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
-                      <div>
-                        <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>{app.job_title}</h3>
-                        <p style={{ fontSize: '14px', color: '#a0a0b8', marginBottom: '6px' }}>{app.company}</p>
-                        <p style={{ fontSize: '12px', color: '#6b6b85' }}>{new Date(app.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</p>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                        {app.match_score && <span style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399', border: '1px solid rgba(52,211,153,0.2)', borderRadius: '99px', padding: '4px 12px', fontSize: '12px', fontWeight: 600 }}>{app.match_score}% match</span>}
-                        {app.tailored_resume && <button style={{ ...s.btnGhost, fontSize: '12px', padding: '6px 12px' }} onClick={() => downloadText(app.tailored_resume, `resume-${app.company}.txt`)}>↓ Resume</button>}
-                        {app.cover_letter && <button style={{ ...s.btnGhost, fontSize: '12px', padding: '6px 12px' }} onClick={() => downloadText(app.cover_letter, `cover-letter-${app.company}.txt`)}>↓ Cover Letter</button>}
-                        {app.job_url && <a href={app.job_url} target="_blank" rel="noopener noreferrer" style={{ ...s.btnPrimary, fontSize: '12px', padding: '6px 12px', textDecoration: 'none', display: 'inline-flex' }}>View Job ↗</a>}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Company</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Applied</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((app) => {
+                    const displayStatus = toDisplayStatus(app.status);
+                    const sc = STATUS_COLORS[displayStatus] || STATUS_COLORS['Applied'];
+
+                    return (
+                      <tr key={app.id}>
+                        <td>
+                          <div className="td-company">{app.company}</div>
+                          {app.apply_url && (
+                            <a href={app.apply_url} target="_blank" rel="noopener noreferrer" className="apply-link">
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                <polyline points="15 3 21 3 21 9" />
+                                <line x1="10" y1="14" x2="21" y2="3" />
+                              </svg>
+                              View posting
+                            </a>
+                          )}
+                        </td>
+
+                        <td className="td-role">{app.job_title}</td>
+
+                        <td>
+                          <div
+                            className="status-badge"
+                            style={{ background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text }}
+                          >
+                            <span className="status-dot" style={{ background: sc.text }} />
+                            <select
+                              className="status-select"
+                              value={displayStatus}
+                              onChange={(e) => handleStatusChange(app.id, e.target.value)}
+                              style={{ color: sc.text, background: 'transparent' }}
+                            >
+                              {STATUS_OPTIONS.map((s) => (
+                                <option key={s} value={s} style={{ background: '#1a1a24', color: '#f0f0f5' }}>
+                                  {s}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </td>
+
+                        <td className="td-date">
+                          {app.applied_at
+                            ? new Date(app.applied_at).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })
+                            : '—'}
+                        </td>
+
+                        <td>
+                          <div className="td-actions">
+                            <button className="icon-btn edit" onClick={() => openEdit(app)}>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                              </svg>
+                              Edit
+                            </button>
+
+                            <button
+                              className="icon-btn danger"
+                              onClick={() => setDeleteId(deleteId === app.id ? null : app.id)}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                <path d="M10 11v6" />
+                                <path d="M14 11v6" />
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                              </svg>
+                              Delete
+                            </button>
+                          </div>
+
+                          {deleteId === app.id && (
+                            <div className="confirm-bar">
+                              <span className="confirm-text">Delete this application?</span>
+                              <div className="confirm-actions">
+                                <button
+                                  className="btn-cancel"
+                                  style={{ padding: '5px 12px', fontSize: 12 }}
+                                  onClick={() => setDeleteId(null)}
+                                >
+                                  Cancel
+                                </button>
+                                <button className="btn-danger" onClick={() => handleDelete(app.id)}>
+                                  Yes, delete
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
           </div>
-        )}
-      </main>
-    </div>
+        </main>
+      </div>
+
+      {modalOpen && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setModalOpen(false)}>
+          <div className="modal">
+            <div className="modal-title">{editRow ? 'Edit application' : 'Add application'}</div>
+
+            <div className="field">
+              <label className="label">Company *</label>
+              <input
+                className="input"
+                placeholder="e.g. Scotiabank"
+                value={form.company}
+                onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))}
+              />
+            </div>
+
+            <div className="field">
+              <label className="label">Role / Job title *</label>
+              <input
+                className="input"
+                placeholder="e.g. Network Tools Specialist"
+                value={form.job_title}
+                onChange={(e) => setForm((f) => ({ ...f, job_title: e.target.value }))}
+              />
+            </div>
+
+            <div className="field">
+              <label className="label">Status</label>
+              <select
+                className="select-input"
+                value={form.status}
+                onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label className="label">Apply URL</label>
+              <input
+                className="input"
+                placeholder="https://..."
+                value={form.apply_url}
+                onChange={(e) => setForm((f) => ({ ...f, apply_url: e.target.value }))}
+              />
+            </div>
+
+            <div className="field">
+              <label className="label">Notes</label>
+              <textarea
+                className="textarea-input"
+                placeholder="Referral contact, interview date, notes..."
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button className="btn-cancel" onClick={() => setModalOpen(false)}>Cancel</button>
+              <button
+                className="btn-primary"
+                onClick={handleSave}
+                disabled={saving || !form.company.trim() || !form.job_title.trim()}
+              >
+                {saving ? <><div className="spin" />Saving...</> : editRow ? 'Save changes' : 'Add application'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
-}
+} 

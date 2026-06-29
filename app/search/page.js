@@ -6,7 +6,10 @@ import { createClient } from '@/lib/supabase/client';
 export default function SearchPage() {
   const supabase = useMemo(() => createClient(), []);
 
+  const FREE_LIMIT = 5;
+
   const [profile, setProfile] = useState(null);
+  const [usageCount, setUsageCount] = useState(0);
   const [activeTab, setActiveTab] = useState('search');
   const [tailorAction, setTailorAction] = useState(null);
 
@@ -44,6 +47,8 @@ export default function SearchPage() {
   const [downloadMenu, setDownloadMenu] = useState({ open: false, type: null });
   const [isExporting, setIsExporting] = useState(false);
 
+  const hasReachedFreeLimit = usageCount >= FREE_LIMIT;
+
   useEffect(() => {
     async function load() {
       const {
@@ -51,12 +56,23 @@ export default function SearchPage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
-        window.location.href = '/login';
+        window.location.href = '/';
         return;
       }
 
-      const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      const [{ data: p }, { data: usageRow, error: usageError }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', user.id).single(),
+        supabase.from('user_usage').select('tailor_count').eq('user_id', user.id).maybeSingle(),
+      ]);
+
       setProfile(p || null);
+
+      if (usageError) {
+        console.error('user_usage read failed:', usageError);
+        setUsageCount(0);
+      } else {
+        setUsageCount(usageRow?.tailor_count || 0);
+      }
     }
 
     load();
@@ -80,6 +96,192 @@ export default function SearchPage() {
 
     return () => clearInterval(interval);
   }, [isTailoring, tailorAction]);
+
+  function closeDownloadMenu() {
+    setDownloadMenu({ open: false, type: null });
+  }
+
+  function openDownloadMenu(type) {
+    setDownloadMenu({ open: true, type });
+  }
+
+  function slugify(value) {
+    return String(value || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  function getResolvedTitle() {
+    return (
+      tailorResult?.jobTitle ||
+      jobTitle ||
+      jobDetails?.title ||
+      selectedJob?.title ||
+      'Unknown'
+    );
+  }
+
+  function getResolvedCompany() {
+    return (
+      tailorResult?.company ||
+      company ||
+      jobDetails?.company ||
+      selectedJob?.company ||
+      'Unknown'
+    );
+  }
+
+  function getResolvedApplyUrl() {
+    return (
+      tailorResult?.applyUrl ||
+      applyUrl.trim() ||
+      jobDetails?.applyUrl ||
+      jobDetails?.job_apply_link ||
+      jobDetails?.jobUrl ||
+      jobDetails?.url ||
+      selectedJob?.applyUrl ||
+      selectedJob?.job_apply_link ||
+      selectedJob?.jobUrl ||
+      selectedJob?.url ||
+      ''
+    );
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    window.location.href = '/';
+  }
+
+  async function upsertApplication({
+    status = 'Draft',
+    company: companyName,
+    jobTitle: resolvedTitle,
+    applyUrl: resolvedApplyUrl,
+    markApplied = false,
+  }) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return null;
+
+    const safeCompany = companyName || 'Unknown';
+    const safeTitle = resolvedTitle || 'Unknown';
+
+    const { data: existingRows, error: existingError } = await supabase
+      .from('applications')
+      .select('id,status')
+      .eq('user_id', user.id)
+      .eq('company', safeCompany)
+      .eq('job_title', safeTitle)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (existingError) {
+      console.error('applications select failed:', existingError);
+    }
+
+    const existing = existingRows?.[0];
+
+    if (existing) {
+      const payload = {
+        status,
+        apply_url: resolvedApplyUrl || null,
+      };
+
+      if (markApplied) {
+        payload.applied_at = new Date().toISOString();
+      }
+
+      const { error: updateError } = await supabase
+        .from('applications')
+        .update(payload)
+        .eq('id', existing.id);
+
+      if (updateError) {
+        console.error('applications update failed:', updateError);
+      }
+
+      return existing.id;
+    }
+
+    const insertPayload = {
+      user_id: user.id,
+      company: safeCompany,
+      job_title: safeTitle,
+      status,
+      apply_url: resolvedApplyUrl || null,
+      created_at: new Date().toISOString(),
+    };
+
+    if (markApplied) {
+      insertPayload.applied_at = new Date().toISOString();
+    }
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('applications')
+      .insert(insertPayload)
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error('applications insert failed:', insertError);
+      return null;
+    }
+
+    return inserted?.id || null;
+  }
+
+  async function incrementUsageIfNeeded(mode) {
+    if (mode !== 'resume') return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data: currentUsage, error: usageReadError } = await supabase
+      .from('user_usage')
+      .select('tailor_count')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (usageReadError) {
+      console.error('user_usage read failed:', usageReadError);
+      return;
+    }
+
+    if (currentUsage) {
+      const nextCount = (currentUsage.tailor_count || 0) + 1;
+
+      const { error: usageUpdateError } = await supabase
+        .from('user_usage')
+        .update({ tailor_count: nextCount })
+        .eq('user_id', user.id);
+
+      if (usageUpdateError) {
+        console.error('user_usage update failed:', usageUpdateError);
+      } else {
+        setUsageCount(nextCount);
+      }
+    } else {
+      const { error: usageInsertError } = await supabase
+        .from('user_usage')
+        .insert({
+          user_id: user.id,
+          tailor_count: 1,
+        });
+
+      if (usageInsertError) {
+        console.error('user_usage insert failed:', usageInsertError);
+      } else {
+        setUsageCount(1);
+      }
+    }
+  }
 
   async function handleSearchJobs() {
     if (!searchQuery.trim()) return;
@@ -152,6 +354,11 @@ export default function SearchPage() {
   }
 
   async function handleTailor(source = 'selected', mode = 'resume') {
+    if (mode === 'resume' && hasReachedFreeLimit) {
+      setTailorError('You have reached your 5 free resumes. Upgrade to Pro for $15/month to continue.');
+      return;
+    }
+
     setTailorError('');
     setTailorResult(null);
     setIsTailoring(true);
@@ -213,12 +420,14 @@ export default function SearchPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Tailoring failed');
 
+      const resolvedApplyUrl = json.applyUrl || finalApplyUrl || '';
+
       if (mode === 'resume') {
         setTailorResult({
           ...json,
           resume: json.resume || '',
           coverLetter: '',
-          applyUrl: json.applyUrl || finalApplyUrl || '',
+          applyUrl: resolvedApplyUrl,
         });
         setActiveResultTab('resume');
       } else {
@@ -226,15 +435,44 @@ export default function SearchPage() {
           ...json,
           resume: '',
           coverLetter: json.coverLetter || '',
-          applyUrl: json.applyUrl || finalApplyUrl || '',
+          applyUrl: resolvedApplyUrl,
         });
         setActiveResultTab('cover');
       }
+
+      await upsertApplication({
+        status: 'Ready',
+        company: comp || 'Unknown',
+        jobTitle: title || 'Unknown',
+        applyUrl: resolvedApplyUrl,
+        markApplied: false,
+      });
+
+      await incrementUsageIfNeeded(mode);
     } catch (err) {
       setTailorError(err.message || 'Something went wrong');
     } finally {
       setIsTailoring(false);
       setTailorAction(null);
+    }
+  }
+
+  async function handleApplyNow(url) {
+    if (!url) return;
+
+    try {
+      await upsertApplication({
+        status: 'Applied',
+        company: getResolvedCompany(),
+        jobTitle: getResolvedTitle(),
+        applyUrl: url,
+        markApplied: true,
+      });
+
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      console.error('Apply tracking failed:', err);
+      window.open(url, '_blank', 'noopener,noreferrer');
     }
   }
 
@@ -245,28 +483,32 @@ export default function SearchPage() {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  function openDownloadMenu(type) {
-    setDownloadMenu({ open: true, type });
-  }
-
-  function closeDownloadMenu() {
-    setDownloadMenu({ open: false, type: null });
-  }
-
   async function handleExport(format) {
     try {
       const type = downloadMenu.type;
       const content = type === 'resume' ? tailorResult?.resume : tailorResult?.coverLetter;
       if (!content) return;
 
+      const firstName = (
+        profile?.first_name ||
+        profile?.full_name?.split(' ')?.[0] ||
+        'candidate'
+      )
+        .toLowerCase()
+        .replace(/\s+/g, '-');
+
+      const companySlug = slugify(
+        tailorResult?.company ||
+          company ||
+          jobDetails?.company ||
+          selectedJob?.company ||
+          'company'
+      );
+
       const baseName =
         type === 'resume'
-          ? `resume-${(tailorResult?.jobTitle || jobTitle || jobDetails?.title || selectedJob?.title || 'tailored')
-              .toLowerCase()
-              .replace(/\s+/g, '-')}`
-          : `cover-letter-${(tailorResult?.company || company || jobDetails?.company || selectedJob?.company || 'tailored')
-              .toLowerCase()
-              .replace(/\s+/g, '-')}`;
+          ? `${firstName}_${companySlug}_resume`
+          : `${firstName}_${companySlug}_coverletter`;
 
       setIsExporting(true);
 
@@ -386,7 +628,7 @@ export default function SearchPage() {
           justify-content: center;
         }
         .brand-name { font-size: 17px; font-weight: 700; }
-        .topbar-right { display: flex; align-items: center; gap: 10px; }
+        .topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .btn-ghost, .btn-primary, .btn-secondary, .action-btn {
           border-radius: 9px;
           font-family: inherit;
@@ -435,6 +677,22 @@ export default function SearchPage() {
         .btn-primary:disabled, .btn-secondary:disabled, .action-btn:disabled {
           opacity: 0.5;
           cursor: not-allowed;
+        }
+        .usage-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 9px 14px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.04);
+          color: #d0d0e2;
+          font-size: 13px;
+          font-weight: 700;
+        }
+        .usage-badge.limit-hit {
+          color: #fca5a5;
+          border-color: rgba(239, 68, 68, 0.35);
+          background: rgba(239, 68, 68, 0.1);
         }
         .layout {
           max-width: 1440px;
@@ -552,6 +810,16 @@ export default function SearchPage() {
           color: #fbbf24;
           font-size: 13px;
           font-weight: 500;
+        }
+        .limit-box {
+          margin-top: 14px;
+          padding: 14px 16px;
+          border-radius: 12px;
+          background: rgba(239,68,68,0.08);
+          border: 1px solid rgba(239,68,68,0.22);
+          color: #fca5a5;
+          font-size: 13px;
+          line-height: 1.6;
         }
         .job-results-shell {
           display: grid;
@@ -813,8 +1081,8 @@ export default function SearchPage() {
           .layout { padding: 16px; }
           .topbar { padding: 14px 16px; }
           .two-col, .top-search-grid, .filter-grid { grid-template-columns: 1fr; }
-          .search-actions, .action-row, .result-actions { flex-direction: column; }
-          .search-actions > *, .action-row > *, .result-actions > * { width: 100%; }
+          .search-actions, .action-row, .result-actions, .topbar-right { flex-direction: column; }
+          .search-actions > *, .action-row > *, .result-actions > *, .topbar-right > * { width: 100%; }
           .download-menu {
             left: 0;
             right: auto;
@@ -826,7 +1094,7 @@ export default function SearchPage() {
 
       <div className="shell">
         <nav className="topbar">
-          <a href="/app" className="brand">
+          <a href="/" className="brand">
             <div className="brand-mark">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -842,8 +1110,14 @@ export default function SearchPage() {
           </a>
 
           <div className="topbar-right">
-            <a href="/app" className="btn-ghost">← Back to profile</a>
-          </div>
+  <div className={`usage-badge ${hasReachedFreeLimit ? 'limit-hit' : ''}`}>
+    Current usage: {usageCount}/{FREE_LIMIT}
+  </div>
+  <a href="/dashboard" className="btn-ghost">Dashboard</a>
+  <button type="button" className="btn-ghost" onClick={handleLogout}>
+    Logout
+  </button>
+</div>
         </nav>
 
         <main className="layout">
@@ -855,7 +1129,13 @@ export default function SearchPage() {
 
             {!profile && (
               <div className="profile-warn">
-                Your saved profile is missing. Go back to /app, fill in the basics, and save it first.
+                Your saved profile is missing. Go back to the landing page, log in, and complete your profile first.
+              </div>
+            )}
+
+            {hasReachedFreeLimit && (
+              <div className="limit-box">
+                You have used all 5 free resume generations. Upgrade to Pro for $15/month to continue with unlimited resume tailoring and full features.
               </div>
             )}
 
@@ -1046,9 +1326,13 @@ export default function SearchPage() {
                   <button
                     className="btn-primary"
                     onClick={() => handleTailor('paste', 'resume')}
-                    disabled={isTailoring || !jobDescription.trim()}
+                    disabled={isTailoring || !jobDescription.trim() || hasReachedFreeLimit}
                   >
-                    {isTailoring && tailorAction === 'resume' ? 'Working...' : 'Tailor resume'}
+                    {hasReachedFreeLimit
+                      ? 'Upgrade to continue'
+                      : isTailoring && tailorAction === 'resume'
+                      ? 'Working...'
+                      : 'Tailor resume'}
                   </button>
 
                   <button
@@ -1060,14 +1344,12 @@ export default function SearchPage() {
                   </button>
 
                   {applyUrl.trim() && (
-                    <a
-                      href={applyUrl.trim()}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
                       className="btn-ghost"
+                      onClick={() => handleApplyNow(applyUrl.trim())}
                     >
                       Apply now
-                    </a>
+                    </button>
                   )}
                 </div>
 
@@ -1158,9 +1440,13 @@ export default function SearchPage() {
                         <button
                           className="btn-primary"
                           onClick={() => handleTailor('selected', 'resume')}
-                          disabled={isTailoring || isLoadingJob || !activeFullJD.trim()}
+                          disabled={isTailoring || isLoadingJob || !activeFullJD.trim() || hasReachedFreeLimit}
                         >
-                          {isTailoring && tailorAction === 'resume' ? 'Working...' : 'Tailor resume'}
+                          {hasReachedFreeLimit
+                            ? 'Upgrade to continue'
+                            : isTailoring && tailorAction === 'resume'
+                            ? 'Working...'
+                            : 'Tailor resume'}
                         </button>
 
                         <button
@@ -1172,14 +1458,12 @@ export default function SearchPage() {
                         </button>
 
                         {currentApplyUrl && (
-                          <a
-                            href={currentApplyUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
                             className="btn-ghost"
+                            onClick={() => handleApplyNow(currentApplyUrl)}
                           >
                             Apply now
-                          </a>
+                          </button>
                         )}
                       </div>
 
@@ -1248,8 +1532,7 @@ export default function SearchPage() {
               <>
                 <div className="result-header">
                   <div className="result-title">
-                    {tailorResult.jobTitle || jobTitle || jobDetails?.title || selectedJob?.title || 'Tailored Application'}
-                    {' '}
+                    {tailorResult.jobTitle || jobTitle || jobDetails?.title || selectedJob?.title || 'Tailored Application'}{' '}
                     {(tailorResult.company || company || jobDetails?.company || selectedJob?.company) && (
                       <span style={{ color: '#6b6b85', fontWeight: 400, fontSize: 16 }}>
                         · {tailorResult.company || company || jobDetails?.company || selectedJob?.company}
@@ -1357,14 +1640,12 @@ export default function SearchPage() {
                   )}
 
                   {resultApplyUrl && (
-                    <a
-                      href={resultApplyUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
                       className="action-btn action-apply"
+                      onClick={() => handleApplyNow(resultApplyUrl)}
                     >
                       Apply now
-                    </a>
+                    </button>
                   )}
 
                   <button
