@@ -2,16 +2,21 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
+import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
+import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
+import '@/app/app.css';
 
-const FREE_TIER_LIMIT = 5;
+const FREE_TIER_LIMIT = FREE_RESUME_LIMIT;
 
-const STATUS_OPTIONS = ['Applied'];
+const STATUS_OPTIONS = ['Tailored', 'Applied', 'Interviewing', 'Offer', 'Rejected'];
 
 const STATUS_COLORS = {
-  Applied: { bg: 'rgba(79,142,247,0.12)', border: 'rgba(79,142,247,0.25)', text: '#4f8ef7' },
-  Interviewing: { bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.3)', text: '#fbbf24' },
-  Offer: { bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.3)', text: '#34d399' },
-  Rejected: { bg: 'rgba(248,113,113,0.1)', border: 'rgba(248,113,113,0.2)', text: '#f87171' },
+  Tailored: { bg: 'rgba(124,58,237,0.12)', border: 'rgba(124,58,237,0.3)', text: '#7c3aed' },
+  Applied: { bg: 'rgba(37,99,235,0.12)', border: 'rgba(37,99,235,0.25)', text: '#2563eb' },
+  Interviewing: { bg: 'rgba(217,119,6,0.12)', border: 'rgba(217,119,6,0.3)', text: '#d97706' },
+  Offer: { bg: 'rgba(5,150,105,0.12)', border: 'rgba(5,150,105,0.3)', text: '#059669' },
+  Rejected: { bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.2)', text: '#dc2626' },
 };
 
 function normalizeStatus(status) {
@@ -21,8 +26,9 @@ function normalizeStatus(status) {
   if (value === 'interviewing' || value === 'interview') return 'Interviewing';
   if (value === 'offer' || value === 'offered') return 'Offer';
   if (value === 'rejected' || value === 'reject') return 'Rejected';
+  if (value === 'tailored' || value === 'ready' || value === 'draft' || value === '') return 'Tailored';
 
-  return 'Applied';
+  return 'Tailored';
 }
 
 function toDisplayStatus(status) {
@@ -33,7 +39,7 @@ export default function DashboardPage() {
   const supabase = useMemo(() => createClient(), []);
   const [profile, setProfile] = useState(null);
   const [applications, setApplications] = useState([]);
-  const [usage, setUsage] = useState(0);
+  const [userId, setUserId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
@@ -47,6 +53,54 @@ export default function DashboardPage() {
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
   const [statusFilter, setStatusFilter] = useState('All');
+  const [managingBilling, setManagingBilling] = useState(false);
+  const [syncingSub, setSyncingSub] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+  const { usage, refresh: refreshUsage, bump: bumpUsage, markPro } = useResumeUsage(supabase, userId);
+  const {
+    modalOpen: upgradeModalOpen,
+    openModal: openUpgradeModal,
+    closeModal: closeUpgradeModal,
+    startCheckout,
+    checkoutLoading,
+    checkoutError,
+    verifyBanner,
+    dismissVerifyBanner,
+  } = useUpgradeFlow(supabase, userId, { refresh: refreshUsage, markPro });
+  const [thankYou, setThankYou] = useState({
+    open: false,
+    app: null,
+    details: '',
+    loading: false,
+    error: '',
+    result: null,
+    copied: false,
+  });
+
+  useEffect(() => {
+    // If the user navigates away (e.g. to the Stripe billing portal or checkout) and then hits
+    // the browser back button, bfcache can restore this page with stale "loading" state frozen
+    // mid-redirect. Reset those flags whenever the page becomes visible/restored again.
+    function resetStuckLoadingState(event) {
+      if (event && event.type === 'pageshow' && !event.persisted) return;
+      setManagingBilling(false);
+      setSyncingSub(false);
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') resetStuckLoadingState();
+    }
+
+    window.addEventListener('pageshow', resetStuckLoadingState);
+    window.addEventListener('focus', resetStuckLoadingState);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pageshow', resetStuckLoadingState);
+      window.removeEventListener('focus', resetStuckLoadingState);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -59,20 +113,42 @@ export default function DashboardPage() {
         return;
       }
 
-      const [{ data: p }, { data: apps }, { data: usg }] = await Promise.all([
+      const [{ data: p }, { data: apps }] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('applications').select('*').eq('user_id', user.id).order('applied_at', { ascending: false }),
-        supabase.from('user_usage').select('tailor_count').eq('user_id', user.id).single(),
       ]);
 
       setProfile(p || null);
       setApplications(apps || []);
-      setUsage(usg?.tailor_count || 0);
+      setUserId(user.id);
       setLoading(false);
     }
 
     load();
   }, [supabase]);
+
+  // When the user returns from the Stripe billing portal (e.g. after cancelling), re-sync their
+  // subscription so cancellation / renewal state is reflected right away.
+  useEffect(() => {
+    if (!userId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('billing') !== 'updated') return;
+
+    (async () => {
+      try {
+        await fetch('/api/stripe/sync-subscription', { method: 'POST' });
+        markPro();
+        await refreshUsage();
+      } catch {
+        /* non-fatal */
+      } finally {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('billing');
+        window.history.replaceState({}, '', url.toString());
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   const now = new Date();
 
@@ -90,13 +166,45 @@ export default function DashboardPage() {
   Rejected: applications.filter((a) => normalizeStatus(a.status) === 'Rejected').length,
 };
 
-  const usagePct = Math.min((usage / FREE_TIER_LIMIT) * 100, 100);
-  const usageLeft = Math.max(FREE_TIER_LIMIT - usage, 0);
+  const usagePct = usage.isPro ? 100 : Math.min((usage.used / FREE_TIER_LIMIT) * 100, 100);
+  const usageLeft = usage.isPro ? Infinity : Math.max(FREE_TIER_LIMIT - usage.used, 0);
 
   const filtered =
-  statusFilter === 'Applied this month'
-    ? thisMonthApps.filter((a) => normalizeStatus(a.status) === 'Applied')
-    : applications;
+    statusFilter === 'This month'
+      ? thisMonthApps
+      : applications;
+
+  async function handleManageBilling() {
+    setManagingBilling(true);
+    try {
+      const res = await fetch('/api/stripe/create-portal-session', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.url) throw new Error(json.error || 'Could not open billing portal.');
+      window.location.href = json.url;
+    } catch (err) {
+      alert(err.message || 'Could not open billing portal.');
+      setManagingBilling(false);
+    }
+  }
+
+  async function handleSyncSubscription() {
+    setSyncingSub(true);
+    setSyncMessage('');
+    try {
+      const res = await fetch('/api/stripe/sync-subscription', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Could not sync subscription.');
+      if (json.isPro) markPro();
+      await refreshUsage();
+      setSyncMessage(
+        json.isPro ? 'Pro status confirmed and applied!' : 'No active subscription found for this account.'
+      );
+    } catch (err) {
+      setSyncMessage(err.message || 'Could not sync subscription.');
+    } finally {
+      setSyncingSub(false);
+    }
+  }
 
   function openAdd() {
     setEditRow(null);
@@ -174,14 +282,74 @@ export default function DashboardPage() {
     setDeleteId(null);
   }
 
-  async function handleStatusChange(id, status) {
-    const displayStatus = toDisplayStatus(status);
+  function openThankYou(app) {
+    setThankYou({ open: true, app, details: '', loading: false, error: '', result: null, copied: false });
+  }
 
-    await supabase.from('applications').update({ status: displayStatus }).eq('id', id);
+  function closeThankYou() {
+    setThankYou({ open: false, app: null, details: '', loading: false, error: '', result: null, copied: false });
+  }
 
-    setApplications((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: displayStatus } : a))
-    );
+  async function handleGenerateThankYou() {
+    if (!thankYou.app) return;
+
+    if (!usage.isPro && usage.used >= usage.limit) {
+      setThankYou((t) => ({
+        ...t,
+        error: 'You have used all 5 free generations this month. Upgrade to Pro for unlimited thank-you emails.',
+      }));
+      return;
+    }
+
+    setThankYou((t) => ({ ...t, loading: true, error: '' }));
+    bumpUsage();
+
+    try {
+      const res = await fetch('/api/generate-thank-you-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile,
+          company: thankYou.app.company,
+          jobTitle: thankYou.app.job_title,
+          interviewDetails: thankYou.details,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          json.error === 'FREE_LIMIT_REACHED'
+            ? 'You have used all 5 free generations this month. Upgrade to Pro for unlimited thank-you emails.'
+            : json.error || 'Failed to generate email'
+        );
+      }
+
+      setThankYou((t) => ({
+        ...t,
+        loading: false,
+        result: { subject: json.subject || '', body: json.body || '' },
+      }));
+    } catch (err) {
+      setThankYou((t) => ({ ...t, loading: false, error: err.message || 'Something went wrong.' }));
+    } finally {
+      refreshUsage();
+    }
+  }
+
+  function handleCopyThankYou() {
+    if (!thankYou.result) return;
+    const text = `Subject: ${thankYou.result.subject}\n\n${thankYou.result.body}`;
+    navigator.clipboard.writeText(text);
+    setThankYou((t) => ({ ...t, copied: true }));
+    setTimeout(() => setThankYou((t) => ({ ...t, copied: false })), 2000);
+  }
+
+  function getThankYouMailto() {
+    if (!thankYou.result) return '#';
+    const subject = encodeURIComponent(thankYou.result.subject || '');
+    const body = encodeURIComponent(thankYou.result.body || '');
+    return `mailto:?subject=${subject}&body=${body}`;
   }
 
   const firstName = profile?.first_name || profile?.full_name?.split(' ')?.[0] || 'there';
@@ -190,96 +358,101 @@ export default function DashboardPage() {
     <>
       <style>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #13131a; color: #f0f0f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-        .shell { min-height: 100vh; background: radial-gradient(circle at top left, rgba(105,162,255,0.07), transparent 30%), radial-gradient(circle at bottom right, rgba(139,92,246,0.05), transparent 25%), #13131a; }
+        body { background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .shell { min-height: 100vh; background: radial-gradient(circle at top left, rgba(37,99,235,0.07), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%), #f8fafc; }
 
-        .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 1px solid rgba(255,255,255,0.07); background: rgba(19,19,26,0.92); backdrop-filter: blur(20px); }
+        .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 1px solid rgba(15,23,42,0.07); background: rgba(255,255,255,0.9); backdrop-filter: blur(20px); }
         .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
-        .brand-mark { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, #4f8ef7, #8b5cf6); display: flex; align-items: center; justify-content: center; }
+        .brand-mark { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, #2563eb, #7c3aed); display: flex; align-items: center; justify-content: center; }
         .brand-name { font-size: 17px; font-weight: 700; }
         .topbar-right { display: flex; align-items: center; gap: 10px; }
-        .btn-ghost { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #a0a0b8; padding: 9px 14px; font-size: 13px; font-weight: 600; border-radius: 9px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
-        .btn-ghost:hover { background: rgba(255,255,255,0.09); color: #f0f0f5; }
-        .btn-primary { background: #4f8ef7; border: none; color: white; padding: 10px 18px; font-size: 14px; font-weight: 700; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
-        .btn-primary:hover { background: #6fa3ff; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(79,142,247,0.3); }
+        .btn-ghost { background: rgba(15,23,42,0.05); border: 1px solid rgba(15,23,42,0.1); color: #475569; padding: 9px 14px; font-size: 13px; font-weight: 600; border-radius: 9px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
+        .btn-ghost:hover { background: rgba(15,23,42,0.09); color: #0f172a; }
+        .btn-primary { background: #2563eb; border: none; color: white; padding: 10px 18px; font-size: 14px; font-weight: 700; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
+        .btn-primary:hover { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(37,99,235,0.3); }
 
         .layout { max-width: 1280px; margin: 0 auto; padding: 36px 28px; }
         .page-header { margin-bottom: 32px; }
         .page-title { font-size: 26px; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 4px; }
-        .page-sub { color: #7d7d96; font-size: 14px; }
+        .page-sub { color: #64748b; font-size: 14px; }
 
         .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
-        .kpi-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 20px 22px; }
-        .kpi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b85; margin-bottom: 10px; }
+        .kpi-card { background: rgba(15,23,42,0.03); border: 1px solid rgba(15,23,42,0.08); border-radius: 16px; padding: 20px 22px; }
+        .kpi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #64748b; margin-bottom: 10px; }
         .kpi-value { font-size: 32px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; margin-bottom: 4px; }
-        .kpi-sub { font-size: 12px; color: #6b6b85; }
-        .kpi-blue { color: #4f8ef7; }
-        .kpi-green { color: #34d399; }
-        .kpi-yellow { color: #fbbf24; }
+        .kpi-sub { font-size: 12px; color: #64748b; }
+        .kpi-blue { color: #2563eb; }
+        .kpi-green { color: #059669; }
+        .kpi-yellow { color: #d97706; }
 
         .usage-bar-wrap { margin-top: 10px; }
-        .usage-bar-track { height: 6px; border-radius: 99px; background: rgba(255,255,255,0.07); overflow: hidden; }
+        .usage-bar-track { height: 6px; border-radius: 99px; background: rgba(15,23,42,0.07); overflow: hidden; }
         .usage-bar-fill { height: 100%; border-radius: 99px; transition: width 0.6s ease; }
 
         .status-row { display: flex; gap: 10px; margin-bottom: 24px; flex-wrap: wrap; align-items: center; }
-        .status-pill { padding: 6px 14px; border-radius: 99px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid transparent; transition: all 0.18s; background: rgba(255,255,255,0.04); color: #7d7d96; border-color: rgba(255,255,255,0.08); }
-        .status-pill:hover { background: rgba(255,255,255,0.07); color: #f0f0f5; }
-        .status-pill.active { background: rgba(79,142,247,0.15); color: #4f8ef7; border-color: rgba(79,142,247,0.3); }
+        .status-pill { padding: 6px 14px; border-radius: 99px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid transparent; transition: all 0.18s; background: rgba(15,23,42,0.04); color: #64748b; border-color: rgba(15,23,42,0.08); }
+        .status-pill:hover { background: rgba(15,23,42,0.07); color: #0f172a; }
+        .status-pill.active { background: rgba(37,99,235,0.15); color: #2563eb; border-color: rgba(37,99,235,0.3); }
         .status-pill-count { margin-left: 5px; opacity: 0.7; }
 
-        .table-card { background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; overflow: hidden; }
-        .table-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+        .table-card { background: rgba(15,23,42,0.025); border: 1px solid rgba(15,23,42,0.08); border-radius: 20px; overflow: hidden; }
+        .table-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid rgba(15,23,42,0.07); }
         .table-title { font-size: 16px; font-weight: 700; }
-        .table-count { font-size: 12px; color: #6b6b85; font-weight: 600; }
+        .table-count { font-size: 12px; color: #64748b; font-weight: 600; }
         table { width: 100%; border-collapse: collapse; }
-        thead th { padding: 12px 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #6b6b85; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
-        tbody tr { border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s; }
+        thead th { padding: 12px 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #64748b; text-align: left; border-bottom: 1px solid rgba(15,23,42,0.06); }
+        tbody tr { border-bottom: 1px solid rgba(15,23,42,0.04); transition: background 0.15s; }
         tbody tr:last-child { border-bottom: none; }
-        tbody tr:hover { background: rgba(255,255,255,0.02); }
+        tbody tr:hover { background: rgba(15,23,42,0.02); }
         tbody td { padding: 14px 20px; font-size: 13px; vertical-align: middle; }
-        .td-company { font-weight: 700; color: #f0f0f5; }
-        .td-role { color: #c8c8d8; }
-        .td-date { color: #6b6b85; font-size: 12px; white-space: nowrap; }
-        .td-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .td-company { font-weight: 700; color: #0f172a; }
+        .td-role { color: #334155; }
+        .td-date { color: #64748b; font-size: 12px; white-space: nowrap; }
+        .td-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
         .status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; white-space: nowrap; }
         .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
         .status-select { background: transparent; border: none; font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit; outline: none; padding: 4px 10px; border-radius: 99px; appearance: none; -webkit-appearance: none; }
 
-        .icon-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; color: #a0a0b8; transition: all 0.18s; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; }
-        .icon-btn:hover { background: rgba(255,255,255,0.08); color: #f0f0f5; }
-        .icon-btn.danger:hover { background: rgba(248,113,113,0.1); color: #f87171; border-color: rgba(248,113,113,0.2); }
-        .icon-btn.edit:hover { background: rgba(79,142,247,0.1); color: #4f8ef7; border-color: rgba(79,142,247,0.2); }
+        .icon-btn { background: rgba(15,23,42,0.04); border: 1px solid rgba(15,23,42,0.08); border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; color: #475569; transition: all 0.18s; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; }
+        .icon-btn:hover { background: rgba(15,23,42,0.08); color: #0f172a; }
+        .icon-btn.danger:hover { background: rgba(220,38,38,0.1); color: #dc2626; border-color: rgba(220,38,38,0.2); }
+        .icon-btn.edit:hover { background: rgba(37,99,235,0.1); color: #2563eb; border-color: rgba(37,99,235,0.2); }
+        .icon-btn.thank:hover { background: rgba(124,58,237,0.1); color: #7c3aed; border-color: rgba(124,58,237,0.2); }
 
-        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 64px 32px; color: #4a4a60; }
+        .ai-note { background: rgba(37,99,235,0.08); border: 1px solid rgba(37,99,235,0.2); color: #1d4ed8; padding: 12px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.6; margin-bottom: 16px; }
+        .error-note { background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.2); color: #dc2626; padding: 10px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 12px; }
+        .success-note { background: rgba(5,150,105,0.08); border: 1px solid rgba(5,150,105,0.25); color: #059669; padding: 12px 16px; border-radius: 10px; font-size: 13px; }
+
+        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 64px 32px; color: #94a3b8; }
         .empty-icon { font-size: 36px; margin-bottom: 14px; opacity: 0.5; }
-        .empty-title { font-size: 16px; font-weight: 600; color: #6b6b85; margin-bottom: 6px; }
-        .empty-sub { font-size: 13px; color: #4a4a60; line-height: 1.7; max-width: 320px; margin-bottom: 20px; }
+        .empty-title { font-size: 16px; font-weight: 600; color: #64748b; margin-bottom: 6px; }
+        .empty-sub { font-size: 13px; color: #94a3b8; line-height: 1.7; max-width: 320px; margin-bottom: 20px; }
 
-        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(6px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
-        .modal { background: #1a1a24; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 28px; width: 100%; max-width: 480px; box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.6); backdrop-filter: blur(6px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .modal { background: #ffffff; border: 1px solid rgba(15,23,42,0.1); border-radius: 20px; padding: 28px; width: 100%; max-width: 480px; box-shadow: 0 24px 60px rgba(15,23,42,0.5); }
         .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 22px; }
         .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
-        .label { font-size: 11px; font-weight: 700; color: #c8c8d8; text-transform: uppercase; letter-spacing: 0.06em; }
-        .input, .select-input, .textarea-input { width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #f0f0f5; border-radius: 10px; padding: 11px 13px; font-size: 14px; outline: none; font-family: inherit; transition: all 0.2s; }
-        .input::placeholder, .textarea-input::placeholder { color: #4a4a60; }
-        .input:focus, .select-input:focus, .textarea-input:focus { border-color: rgba(79,142,247,0.5); box-shadow: 0 0 0 3px rgba(79,142,247,0.1); }
+        .label { font-size: 11px; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: 0.06em; }
+        .input, .select-input, .textarea-input { width: 100%; background: rgba(15,23,42,0.05); border: 1px solid rgba(15,23,42,0.1); color: #0f172a; border-radius: 10px; padding: 11px 13px; font-size: 14px; outline: none; font-family: inherit; transition: all 0.2s; }
+        .input::placeholder, .textarea-input::placeholder { color: #94a3b8; }
+        .input:focus, .select-input:focus, .textarea-input:focus { border-color: rgba(37,99,235,0.5); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
         .textarea-input { resize: vertical; min-height: 80px; line-height: 1.6; }
         .modal-actions { display: flex; gap: 10px; margin-top: 6px; justify-content: flex-end; }
-        .btn-cancel { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #a0a0b8; padding: 10px 18px; font-size: 14px; font-weight: 600; border-radius: 9px; cursor: pointer; font-family: inherit; transition: all 0.2s; }
-        .btn-cancel:hover { background: rgba(255,255,255,0.08); color: #f0f0f5; }
+        .btn-cancel { background: rgba(15,23,42,0.05); border: 1px solid rgba(15,23,42,0.1); color: #475569; padding: 10px 18px; font-size: 14px; font-weight: 600; border-radius: 9px; cursor: pointer; font-family: inherit; transition: all 0.2s; }
+        .btn-cancel:hover { background: rgba(15,23,42,0.08); color: #0f172a; }
 
-        .confirm-bar { background: rgba(248,113,113,0.07); border: 1px solid rgba(248,113,113,0.18); border-radius: 12px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
-        .confirm-text { font-size: 13px; color: #f87171; }
+        .confirm-bar { background: rgba(220,38,38,0.07); border: 1px solid rgba(220,38,38,0.18); border-radius: 12px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+        .confirm-text { font-size: 13px; color: #dc2626; }
         .confirm-actions { display: flex; gap: 8px; }
-        .btn-danger { background: rgba(248,113,113,0.15); border: 1px solid rgba(248,113,113,0.3); color: #f87171; padding: 7px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; font-family: inherit; transition: all 0.18s; }
-        .btn-danger:hover { background: rgba(248,113,113,0.25); }
+        .btn-danger { background: rgba(220,38,38,0.15); border: 1px solid rgba(220,38,38,0.3); color: #dc2626; padding: 7px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; font-family: inherit; transition: all 0.18s; }
+        .btn-danger:hover { background: rgba(220,38,38,0.25); }
 
-        .spin { width: 16px; height: 16px; border: 2px solid rgba(79,142,247,0.2); border-top-color: #4f8ef7; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+        .spin { width: 16px; height: 16px; border: 2px solid rgba(37,99,235,0.2); border-top-color: #2563eb; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        .apply-link { color: #4f8ef7; text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
+        .apply-link { color: #2563eb; text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
         .apply-link:hover { text-decoration: underline; }
 
         @media (max-width: 900px) {
@@ -289,7 +462,7 @@ export default function DashboardPage() {
           .kpi-grid { grid-template-columns: 1fr 1fr; }
           .layout { padding: 20px 16px; }
           .topbar { padding: 14px 16px; }
-          thead th:nth-child(4), tbody td:nth-child(4) { display: none; }
+          thead th:nth-child(3), tbody td:nth-child(3) { display: none; }
         }
       `}</style>
 
@@ -308,6 +481,29 @@ export default function DashboardPage() {
           </a>
 
           <div className="topbar-right">
+            <UsageNavPill supabase={supabase} userId={userId} className="usage-badge" limitHitClassName="limit-hit" />
+            {!loading && !usage.isPro && (
+              <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
+                ✨ Upgrade to Pro
+              </button>
+            )}
+            {!loading && !usage.isPro && (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={handleSyncSubscription}
+                disabled={syncingSub}
+                style={{ fontSize: 12 }}
+                title="Already paid but still seeing the free tier? Click to re-check with Stripe."
+              >
+                {syncingSub ? 'Checking...' : 'Already paid? Sync status'}
+              </button>
+            )}
+            {!loading && usage.isPro && (
+              <button type="button" className="btn-ghost" onClick={handleManageBilling} disabled={managingBilling}>
+                {managingBilling ? 'Opening...' : 'Manage billing'}
+              </button>
+            )}
             <a href="/search" className="btn-ghost">Job search</a>
             <a href="/app" className="btn-ghost">Profile</a>
           </div>
@@ -322,6 +518,60 @@ export default function DashboardPage() {
               Track every application, monitor your free tier usage, and stay on top of your job hunt.
             </div>
           </div>
+
+          {!verifyBanner && !!syncMessage && (
+            <div className={syncMessage.includes('confirmed') ? 'success-note' : 'error-note'} style={{ marginBottom: 20 }}>
+              {syncMessage}
+              <button
+                type="button"
+                onClick={() => setSyncMessage('')}
+                style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {verifyBanner === 'success' && (
+            <div className="success-note" style={{ marginBottom: 20 }}>
+              🎉 You're now on Applymatic Pro — unlimited resumes, cover letters, and thank-you emails.
+              <button
+                type="button"
+                onClick={dismissVerifyBanner}
+                style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {verifyBanner === 'error' && (
+            <div className="error-note" style={{ marginBottom: 20 }}>
+              We couldn't confirm your payment automatically.
+              <button
+                type="button"
+                onClick={dismissVerifyBanner}
+                style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
+              >
+                ✕
+              </button>
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={handleSyncSubscription}
+                  disabled={syncingSub}
+                  style={{ fontSize: 12, padding: '7px 12px' }}
+                >
+                  {syncingSub ? 'Checking Stripe...' : 'Retry: sync subscription status'}
+                </button>
+                <span style={{ fontSize: 12, color: '#64748b' }}>
+                  Still stuck? Contact info@jauraautomation.com.
+                </span>
+              </div>
+              {!!syncMessage && <div style={{ marginTop: 8, fontSize: 12.5 }}>{syncMessage}</div>}
+            </div>
+          )}
 
           <div className="kpi-grid">
             <div className="kpi-card">
@@ -338,27 +588,65 @@ export default function DashboardPage() {
 
 
             <div className="kpi-card">
-              <div className="kpi-label">Free tier usage</div>
-              <div className="kpi-value" style={{ color: usagePct >= 80 ? '#f87171' : '#34d399', fontSize: 28 }}>
-                {loading ? '—' : `${usage} / ${FREE_TIER_LIMIT}`}
-              </div>
-              <div className="usage-bar-wrap">
-                <div className="usage-bar-track">
-                  <div
-                    className="usage-bar-fill"
-                    style={{
-                      width: loading ? '0%' : `${usagePct}%`,
-                      background:
-                        usagePct >= 80
-                          ? 'linear-gradient(90deg, #f87171, #ef4444)'
-                          : 'linear-gradient(90deg, #34d399, #4f8ef7)',
-                    }}
-                  />
-                </div>
-                <div className="kpi-sub" style={{ marginTop: 6 }}>
-                  {loading ? '' : usageLeft > 0 ? `${usageLeft} tailors remaining` : 'Limit reached — upgrade to continue'}
-                </div>
-              </div>
+              <div className="kpi-label">{usage.isPro ? 'Plan' : 'Free tier usage'}</div>
+              {usage.isPro ? (
+                <>
+                  <div className="kpi-value" style={{ color: usage.cancelAtPeriodEnd ? '#d97706' : '#7c3aed', fontSize: 28 }}>
+                    {usage.cancelAtPeriodEnd ? 'Pro (ending)' : 'Pro ✨'}
+                  </div>
+                  <div className="kpi-sub" style={{ marginTop: 6 }}>
+                    {usage.cancelAtPeriodEnd && usage.periodEnd
+                      ? `Cancelled — Pro access continues until ${formatProAccessDate(usage.periodEnd)}, then you'll move to the free tier.`
+                      : 'Unlimited resumes, cover letters & emails'}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    style={{ marginTop: 12, fontSize: 12, padding: '8px 12px' }}
+                    onClick={handleManageBilling}
+                    disabled={managingBilling}
+                  >
+                    {managingBilling
+                      ? 'Opening...'
+                      : usage.cancelAtPeriodEnd
+                        ? 'Manage / resume subscription'
+                        : 'Manage / cancel subscription'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="kpi-value" style={{ color: usagePct >= 80 ? '#dc2626' : '#059669', fontSize: 28 }}>
+                    {loading ? '—' : `${usage.used} / ${FREE_TIER_LIMIT}`}
+                  </div>
+                  <div className="usage-bar-wrap">
+                    <div className="usage-bar-track">
+                      <div
+                        className="usage-bar-fill"
+                        style={{
+                          width: loading ? '0%' : `${usagePct}%`,
+                          background:
+                            usagePct >= 80
+                              ? 'linear-gradient(90deg, #dc2626, #dc2626)'
+                              : 'linear-gradient(90deg, #059669, #2563eb)',
+                        }}
+                      />
+                    </div>
+                    <div className="kpi-sub" style={{ marginTop: 6 }}>
+                      {loading ? '' : usageLeft > 0 ? `${usageLeft} generations remaining` : 'Limit reached — upgrade to continue'}
+                    </div>
+                    {!loading && (
+                      <button
+                        type="button"
+                        className="upgrade-pill-btn"
+                        style={{ marginTop: 12, fontSize: 12, padding: '8px 12px' }}
+                        onClick={openUpgradeModal}
+                      >
+                        ✨ Upgrade to Pro
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -367,8 +655,8 @@ export default function DashboardPage() {
               <div>
                 <div className="table-title">Applications</div>
                 <div className="table-count">
-  {filtered.length} {statusFilter === 'All' ? 'total' : 'applied this month'}
-</div>
+                  {filtered.length} {statusFilter === 'All' ? 'total' : 'this month'}
+                </div>
               </div>
               <button className="btn-primary" onClick={openAdd}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -379,33 +667,30 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <div style={{ padding: '14px 20px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ padding: '14px 20px 0', borderBottom: '1px solid rgba(15,23,42,0.06)' }}>
               <div className="status-row">
                 {[
-  { label: 'All', count: applications.length },
-  {
-    label: 'Applied this month',
-    count: thisMonthApps.filter((a) => normalizeStatus(a.status) === 'Applied').length,
-  },
-].map((item) => (
-  <button
-    key={item.label}
-    className={`status-pill${statusFilter === item.label ? ' active' : ''}`}
-    onClick={() => setStatusFilter(item.label)}
-    style={
-      statusFilter === item.label && item.label !== 'All'
-        ? {
-            background: STATUS_COLORS.Applied.bg,
-            borderColor: STATUS_COLORS.Applied.border,
-            color: STATUS_COLORS.Applied.text,
-          }
-        : {}
-    }
-  >
-    {item.label}
-    <span className="status-pill-count">{item.count}</span>
-  </button>
-))}
+                  { label: 'All', count: applications.length },
+                  { label: 'This month', count: thisMonthApps.length },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    className={`status-pill${statusFilter === item.label ? ' active' : ''}`}
+                    onClick={() => setStatusFilter(item.label)}
+                    style={
+                      statusFilter === item.label && item.label !== 'All'
+                        ? {
+                            background: STATUS_COLORS.Tailored.bg,
+                            borderColor: STATUS_COLORS.Tailored.border,
+                            color: STATUS_COLORS.Tailored.text,
+                          }
+                        : {}
+                    }
+                  >
+                    {item.label}
+                    <span className="status-pill-count">{item.count}</span>
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -417,13 +702,13 @@ export default function DashboardPage() {
               <div className="empty-state">
                 <div className="empty-icon">📋</div>
                 <div className="empty-title">
-  {statusFilter === 'All' ? 'No applications yet' : 'No applied applications this month'}
-</div>
-<div className="empty-sub">
-  {statusFilter === 'All'
-    ? 'Start tracking your job applications here. Add one manually or apply directly from the job search.'
-    : 'No applications with Applied status were added this month.'}
-</div>
+                  {statusFilter === 'All' ? 'No applications yet' : 'No applications this month'}
+                </div>
+                <div className="empty-sub">
+                  {statusFilter === 'All'
+                    ? 'Start tracking your job applications here. Add one manually or apply directly from the job search.'
+                    : 'No applications were added this month yet.'}
+                </div>
                 {statusFilter === 'All' && (
                   <button className="btn-primary" onClick={openAdd}>Add first application</button>
                 )}
@@ -434,16 +719,12 @@ export default function DashboardPage() {
                   <tr>
                     <th>Company</th>
                     <th>Role</th>
-                    <th>Status</th>
                     <th>Applied</th>
                     <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((app) => {
-                    const displayStatus = toDisplayStatus(app.status);
-                    const sc = STATUS_COLORS[displayStatus] || STATUS_COLORS['Applied'];
-
                     return (
                       <tr key={app.id}>
                         <td>
@@ -462,27 +743,6 @@ export default function DashboardPage() {
 
                         <td className="td-role">{app.job_title}</td>
 
-                        <td>
-                          <div
-                            className="status-badge"
-                            style={{ background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text }}
-                          >
-                            <span className="status-dot" style={{ background: sc.text }} />
-                            <select
-                              className="status-select"
-                              value={displayStatus}
-                              onChange={(e) => handleStatusChange(app.id, e.target.value)}
-                              style={{ color: sc.text, background: 'transparent' }}
-                            >
-                              {STATUS_OPTIONS.map((s) => (
-                                <option key={s} value={s} style={{ background: '#1a1a24', color: '#f0f0f5' }}>
-                                  {s}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </td>
-
                         <td className="td-date">
                           {app.applied_at
                             ? new Date(app.applied_at).toLocaleDateString('en-US', {
@@ -495,12 +755,16 @@ export default function DashboardPage() {
 
                         <td>
                           <div className="td-actions">
-                            <button className="icon-btn edit" onClick={() => openEdit(app)}>
+                            <button
+                              className="icon-btn thank"
+                              style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                              onClick={() => openThankYou(app)}
+                            >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                <path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z" />
+                                <path d="M3 6l9 7 9-7" />
                               </svg>
-                              Edit
+                              Thank you email
                             </button>
 
                             <button
@@ -617,6 +881,102 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {thankYou.open && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeThankYou()}>
+          <div className="modal" style={{ maxWidth: 560 }}>
+            <div className="modal-title">
+              Thank-you email{thankYou.app ? ` — ${thankYou.app.job_title} at ${thankYou.app.company}` : ''}
+            </div>
+
+            {!thankYou.result && (
+              <>
+                <div className="ai-note">
+                  ✦ This email is auto-generated. Please add a few details about your interview (interviewer's
+                  name, topics discussed, anything memorable) so it can be personalized into a highly
+                  professional, tailored thank-you note.
+                </div>
+
+                <div className="field">
+                  <label className="label">Interview details (optional but recommended)</label>
+                  <textarea
+                    className="textarea-input"
+                    style={{ minHeight: 130 }}
+                    placeholder="e.g. Interviewed with Sarah (Engineering Manager) on Tuesday. We discussed the team's migration to microservices and my experience leading similar projects..."
+                    value={thankYou.details}
+                    onChange={(e) => setThankYou((t) => ({ ...t, details: e.target.value }))}
+                  />
+                </div>
+
+                {!!thankYou.error && <div className="error-note">{thankYou.error}</div>}
+
+                <div className="modal-actions">
+                  <button className="btn-cancel" onClick={closeThankYou}>Cancel</button>
+                  <button className="btn-primary" onClick={handleGenerateThankYou} disabled={thankYou.loading}>
+                    {thankYou.loading ? <><div className="spin" />Generating...</> : 'Generate thank-you email'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {!!thankYou.result && (
+              <>
+                <div className="field">
+                  <label className="label">Subject</label>
+                  <input
+                    className="input"
+                    value={thankYou.result.subject}
+                    onChange={(e) =>
+                      setThankYou((t) => ({ ...t, result: { ...t.result, subject: e.target.value } }))
+                    }
+                  />
+                </div>
+
+                <div className="field">
+                  <label className="label">Body</label>
+                  <textarea
+                    className="textarea-input"
+                    style={{ minHeight: 240 }}
+                    value={thankYou.result.body}
+                    onChange={(e) =>
+                      setThankYou((t) => ({ ...t, result: { ...t.result, body: e.target.value } }))
+                    }
+                  />
+                </div>
+
+                <div className="ai-note">
+                  Ready to send — copy the email or open it in your mail client, then just add the recipient's
+                  address in the "To" field.
+                </div>
+
+                <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
+                  <button className="btn-cancel" onClick={() => setThankYou((t) => ({ ...t, result: null }))}>
+                    ← Edit details
+                  </button>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button className="btn-cancel" onClick={handleCopyThankYou}>
+                      {thankYou.copied ? 'Copied!' : 'Copy email'}
+                    </button>
+                    <a className="btn-primary" href={getThankYouMailto()} style={{ textDecoration: 'none' }}>
+                      Compose email
+                    </a>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <UpgradeModal
+        open={upgradeModalOpen}
+        onClose={closeUpgradeModal}
+        onConfirm={startCheckout}
+        loading={checkoutLoading}
+        error={checkoutError}
+      />
+
+      <UpgradeBanner show={!loading && !usage.isPro} onUpgradeClick={openUpgradeModal} />
     </>
   );
 } 

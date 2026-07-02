@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@/lib/supabase/server';
+import { flattenProfileForAi } from '@/lib/profile-data';
+import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -26,19 +28,21 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const month = new Date().toISOString().slice(0, 7);
+    const month = getCurrentUsageMonth();
 
-    const { data: usageRow } = await supabase
-      .from('user_usage')
-      .select('tailor_count,is_pro')
-      .eq('user_id', user.id)
-      .eq('month', month)
-      .maybeSingle();
+    const [{ data: usageRow }, isPro] = await Promise.all([
+      supabase
+        .from('user_usage')
+        .select('tailor_count')
+        .eq('user_id', user.id)
+        .eq('month', month)
+        .maybeSingle(),
+      fetchProStatus(supabase, user.id),
+    ]);
 
     const count = usageRow?.tailor_count || 0;
-    const isPro = usageRow?.is_pro || false;
 
-    if (!isPro && count >= 999) {
+    if (!isPro && count >= FREE_RESUME_LIMIT) {
       return NextResponse.json(
         { error: 'FREE_LIMIT_REACHED', count },
         { status: 403 }
@@ -61,7 +65,7 @@ export async function POST(request) {
       );
     }
 
-    const normalizedProfile = {
+    const normalizedProfile = flattenProfileForAi({
       first_name: profile.first_name || profile.firstName || profile.full_name?.split(' ')?.[0] || '',
       last_name:
         profile.last_name ||
@@ -85,7 +89,7 @@ export async function POST(request) {
       skills: profile.skills || '',
       projects: profile.projects || '',
       additional_info: profile.additional_info || profile.additionalInfo || '',
-    };
+    });
 
     const candidateName =
       normalizedProfile.full_name ||
@@ -96,6 +100,7 @@ export async function POST(request) {
     let coverLetter = '';
     let matchScore = null;
     let matchReasons = '';
+    let matchImprovementTips = '';
     let tailoredStructured = null;
 
     if (normalizedMode === 'resume') {
@@ -124,7 +129,8 @@ Return ONLY valid JSON in this exact shape:
   "certifications": [],
   "projects": [{ "name": "", "years": "", "details": [] }],
   "match_score": 0,
-  "match_reasons": []
+  "match_reasons": [],
+  "match_improvement_tips": []
 }
 
 Rules:
@@ -146,7 +152,10 @@ Rules:
 - "years" must always contain the date range string, e.g. "Oct 2025 - Present"
 - Never leave "years" blank if dates are mentioned
 - Never include dates inside the "title" field
-- match_reasons must be short specific reasons for score strength or gaps.
+- match_reasons must be short specific reasons for score strength or gaps (e.g. missing required skills, licenses, or years of experience).
+- match_improvement_tips must contain 3-5 concrete, realistic, actionable steps the candidate could take to raise their match score toward 85%+ for THIS specific job — e.g. specific certifications/licenses to pursue, specific skills to build or highlight more prominently, specific keywords from the job description to naturally incorporate, or types of experience to gain or emphasize.
+- Each match_improvement_tip must be specific to this job and this candidate's actual gaps — never generic advice like "improve your resume".
+- Never suggest fabricating experience, skills, or credentials the candidate doesn't have — only suggest legitimate ways to close real gaps or better surface existing strengths.
 - Optimize as much as possible for ATS match, but never fabricate qualifications.`,
           },
           {
@@ -197,6 +206,10 @@ ${jobDescription.slice(0, 12000)}`,
 
       matchReasons = Array.isArray(tailoredStructured?.match_reasons)
         ? tailoredStructured.match_reasons.join('\n')
+        : '';
+
+      matchImprovementTips = Array.isArray(tailoredStructured?.match_improvement_tips)
+        ? tailoredStructured.match_improvement_tips.join('\n')
         : '';
     }
 
@@ -279,7 +292,6 @@ ${jobDescription.slice(0, 8000)}`,
         user_id: user.id,
         month,
         tailor_count: count + 1,
-        is_pro: isPro,
       },
       { onConflict: 'user_id,month' }
     );
@@ -293,13 +305,14 @@ ${jobDescription.slice(0, 8000)}`,
   coverLetter: normalizedMode === 'cover_letter' ? coverLetter : '',
   matchScore: normalizedMode === 'resume' ? matchScore : null,
   matchReasons: normalizedMode === 'resume' ? matchReasons : '',
+  matchImprovementTips: normalizedMode === 'resume' ? matchImprovementTips : '',
   jobTitle: jobTitle || null,
   company: company || null,
   applyUrl: applyUrl || null,
   mode: normalizedMode,
   usage: {
     count: count + 1,
-    limit: isPro ? 'unlimited' : 5,
+    limit: isPro ? 'unlimited' : FREE_RESUME_LIMIT,
   },
 });
   } catch (err) {

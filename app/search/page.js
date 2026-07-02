@@ -1,15 +1,38 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
+import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 
 export default function SearchPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', background: '#f8fafc', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading search...</div>}>
+      <SearchPageContent />
+    </Suspense>
+  );
+}
+
+function SearchPageContent() {
   const supabase = useMemo(() => createClient(), []);
+  const searchParams = useSearchParams();
 
   const FREE_LIMIT = 5;
 
   const [profile, setProfile] = useState(null);
-  const [usageCount, setUsageCount] = useState(0);
+  const [userId, setUserId] = useState(null);
+  const { usage, refresh: refreshUsage, bump: bumpUsage, markPro } = useResumeUsage(supabase, userId);
+  const {
+    modalOpen: upgradeModalOpen,
+    openModal: openUpgradeModal,
+    closeModal: closeUpgradeModal,
+    startCheckout,
+    checkoutLoading,
+    checkoutError,
+    verifyBanner,
+    dismissVerifyBanner,
+  } = useUpgradeFlow(supabase, userId, { refresh: refreshUsage, markPro });
   const [activeTab, setActiveTab] = useState('search');
   const [tailorAction, setTailorAction] = useState(null);
 
@@ -43,11 +66,28 @@ export default function SearchPage() {
   const [tailorError, setTailorError] = useState('');
   const [activeResultTab, setActiveResultTab] = useState('resume');
   const [copied, setCopied] = useState(false);
+  const [tailorSource, setTailorSource] = useState('selected');
+  const [resultKey, setResultKey] = useState('');
 
   const [downloadMenu, setDownloadMenu] = useState({ open: false, type: null });
   const [isExporting, setIsExporting] = useState(false);
 
-  const hasReachedFreeLimit = usageCount >= FREE_LIMIT;
+  const hasReachedFreeLimit = !usage.isPro && usage.used >= FREE_LIMIT;
+
+  useEffect(() => {
+    const q = searchParams.get('q') || searchParams.get('role') || '';
+    const companyParam = searchParams.get('company') || '';
+
+    if (q) {
+      setSearchQuery(q);
+      setJobTitle(q);
+    }
+    if (companyParam) {
+      setSearchCompany(companyParam);
+      setCompany(companyParam);
+      setShowMoreFilters(true);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     async function load() {
@@ -60,19 +100,10 @@ export default function SearchPage() {
         return;
       }
 
-      const [{ data: p }, { data: usageRow, error: usageError }] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase.from('user_usage').select('tailor_count').eq('user_id', user.id).maybeSingle(),
-      ]);
+      const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single();
 
+      setUserId(user.id);
       setProfile(p || null);
-
-      if (usageError) {
-        console.error('user_usage read failed:', usageError);
-        setUsageCount(0);
-      } else {
-        setUsageCount(usageRow?.tailor_count || 0);
-      }
     }
 
     load();
@@ -234,55 +265,6 @@ export default function SearchPage() {
     return inserted?.id || null;
   }
 
-  async function incrementUsageIfNeeded(mode) {
-    if (mode !== 'resume') return;
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) return;
-
-    const { data: currentUsage, error: usageReadError } = await supabase
-      .from('user_usage')
-      .select('tailor_count')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (usageReadError) {
-      console.error('user_usage read failed:', usageReadError);
-      return;
-    }
-
-    if (currentUsage) {
-      const nextCount = (currentUsage.tailor_count || 0) + 1;
-
-      const { error: usageUpdateError } = await supabase
-        .from('user_usage')
-        .update({ tailor_count: nextCount })
-        .eq('user_id', user.id);
-
-      if (usageUpdateError) {
-        console.error('user_usage update failed:', usageUpdateError);
-      } else {
-        setUsageCount(nextCount);
-      }
-    } else {
-      const { error: usageInsertError } = await supabase
-        .from('user_usage')
-        .insert({
-          user_id: user.id,
-          tailor_count: 1,
-        });
-
-      if (usageInsertError) {
-        console.error('user_usage insert failed:', usageInsertError);
-      } else {
-        setUsageCount(1);
-      }
-    }
-  }
-
   async function handleSearchJobs() {
     if (!searchQuery.trim()) return;
 
@@ -354,17 +336,20 @@ export default function SearchPage() {
   }
 
   async function handleTailor(source = 'selected', mode = 'resume') {
-    if (mode === 'resume' && hasReachedFreeLimit) {
-      setTailorError('You have reached your 5 free resumes. Upgrade to Pro for $15/month to continue.');
+    if (hasReachedFreeLimit) {
+      setTailorError(
+        'You have used all 5 free resume/cover letter generations this month. Upgrade to Pro for CAD $9.99/month to continue.'
+      );
       return;
     }
 
     setTailorError('');
-    setTailorResult(null);
     setIsTailoring(true);
     setTailorAction(mode);
+    setTailorSource(source);
     setCopied(false);
     closeDownloadMenu();
+    bumpUsage();
 
     try {
       let jd = '';
@@ -404,6 +389,14 @@ export default function SearchPage() {
         throw new Error('Job description is required.');
       }
 
+      const newResultKey = `${title}||${comp}||${jd.slice(0, 120)}`;
+      const isSameContext = newResultKey === resultKey;
+      setResultKey(newResultKey);
+
+      if (!isSameContext) {
+        setTailorResult(null);
+      }
+
       const res = await fetch('/api/tailor-resume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -422,23 +415,39 @@ export default function SearchPage() {
 
       const resolvedApplyUrl = json.applyUrl || finalApplyUrl || '';
 
-      if (mode === 'resume') {
-        setTailorResult({
+      setTailorResult((prev) => {
+        const base = isSameContext ? prev || {} : {};
+
+        if (mode === 'resume') {
+          return {
+            ...base,
+            ...json,
+            resume: json.resume || '',
+            coverLetter: base.coverLetter || '',
+            matchScore: json.matchScore ?? base.matchScore ?? null,
+            matchReasons: json.matchReasons || base.matchReasons || '',
+            matchImprovementTips: json.matchImprovementTips || base.matchImprovementTips || '',
+            applyUrl: resolvedApplyUrl || base.applyUrl || '',
+            jobTitle: json.jobTitle || base.jobTitle || title,
+            company: json.company || base.company || comp,
+          };
+        }
+
+        return {
+          ...base,
           ...json,
-          resume: json.resume || '',
-          coverLetter: '',
-          applyUrl: resolvedApplyUrl,
-        });
-        setActiveResultTab('resume');
-      } else {
-        setTailorResult({
-          ...json,
-          resume: '',
+          resume: base.resume || '',
           coverLetter: json.coverLetter || '',
-          applyUrl: resolvedApplyUrl,
-        });
-        setActiveResultTab('cover');
-      }
+          matchScore: base.matchScore ?? null,
+          matchReasons: base.matchReasons || '',
+          matchImprovementTips: base.matchImprovementTips || '',
+          applyUrl: resolvedApplyUrl || base.applyUrl || '',
+          jobTitle: json.jobTitle || base.jobTitle || title,
+          company: json.company || base.company || comp,
+        };
+      });
+
+      setActiveResultTab(mode === 'resume' ? 'resume' : 'cover');
 
       await upsertApplication({
         status: 'Ready',
@@ -447,13 +456,12 @@ export default function SearchPage() {
         applyUrl: resolvedApplyUrl,
         markApplied: false,
       });
-
-      await incrementUsageIfNeeded(mode);
     } catch (err) {
       setTailorError(err.message || 'Something went wrong');
     } finally {
       setIsTailoring(false);
       setTailorAction(null);
+      refreshUsage();
     }
   }
 
@@ -570,12 +578,29 @@ export default function SearchPage() {
   const showMatchScore =
     tailorResult?.matchScore !== undefined && tailorResult?.matchScore !== null;
 
+  const matchReasonsList = (tailorResult?.matchReasons || '')
+    .split('\n')
+    .map((line) => line.replace(/^[-•\d.]+\s*/, '').trim())
+    .filter(Boolean);
+
+  const matchTipsList = (tailorResult?.matchImprovementTips || '')
+    .split('\n')
+    .map((line) => line.replace(/^[-•\d.]+\s*/, '').trim())
+    .filter(Boolean);
+
   const currentResultText =
     activeResultTab === 'resume'
       ? tailorResult?.resume
       : activeResultTab === 'cover'
       ? tailorResult?.coverLetter
-      : tailorResult?.matchReasons;
+      : [
+          matchReasonsList.length ? `WHY THIS SCORE:\n${matchReasonsList.map((l) => `- ${l}`).join('\n')}` : '',
+          matchTipsList.length
+            ? `HOW TO REACH 85%+ MATCH:\n${matchTipsList.map((l) => `- ${l}`).join('\n')}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
 
   const loadingSteps =
     tailorAction === 'cover_letter'
@@ -597,13 +622,13 @@ export default function SearchPage() {
     <>
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #13131a; color: #f0f0f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        body { background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         .shell {
           min-height: 100vh;
           background:
-            radial-gradient(circle at top left, rgba(105,162,255,0.07), transparent 30%),
-            radial-gradient(circle at bottom right, rgba(139,92,246,0.05), transparent 25%),
-            #13131a;
+            radial-gradient(circle at top left, rgba(37,99,235,0.07), transparent 30%),
+            radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%),
+            #f8fafc;
         }
         .topbar {
           position: sticky;
@@ -613,8 +638,8 @@ export default function SearchPage() {
           align-items: center;
           justify-content: space-between;
           padding: 16px 28px;
-          border-bottom: 1px solid rgba(255,255,255,0.07);
-          background: rgba(19,19,26,0.92);
+          border-bottom: 1px solid rgba(15,23,42,0.07);
+          background: rgba(255,255,255,0.9);
           backdrop-filter: blur(20px);
         }
         .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
@@ -622,7 +647,7 @@ export default function SearchPage() {
           width: 36px;
           height: 36px;
           border-radius: 9px;
-          background: linear-gradient(135deg, #4f8ef7, #8b5cf6);
+          background: linear-gradient(135deg, #2563eb, #7c3aed);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -641,16 +666,16 @@ export default function SearchPage() {
           cursor: pointer;
         }
         .btn-ghost {
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.1);
-          color: #a0a0b8;
+          background: rgba(15,23,42,0.05);
+          border: 1px solid rgba(15,23,42,0.1);
+          color: #475569;
           padding: 9px 14px;
           font-size: 13px;
           font-weight: 600;
         }
-        .btn-ghost:hover { background: rgba(255,255,255,0.09); color: #f0f0f5; }
+        .btn-ghost:hover { background: rgba(15,23,42,0.09); color: #0f172a; }
         .btn-primary {
-          background: #4f8ef7;
+          background: #2563eb;
           border: none;
           color: white;
           padding: 10px 18px;
@@ -658,21 +683,21 @@ export default function SearchPage() {
           font-weight: 700;
         }
         .btn-primary:hover:not(:disabled) {
-          background: #6fa3ff;
+          background: #1d4ed8;
           transform: translateY(-1px);
-          box-shadow: 0 8px 24px rgba(79,142,247,0.3);
+          box-shadow: 0 8px 24px rgba(37,99,235,0.3);
         }
         .btn-secondary {
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.12);
-          color: #f0f0f5;
+          background: rgba(15,23,42,0.05);
+          border: 1px solid rgba(15,23,42,0.12);
+          color: #0f172a;
           padding: 10px 18px;
           font-size: 14px;
           font-weight: 700;
         }
         .btn-secondary:hover:not(:disabled) {
-          background: rgba(255,255,255,0.08);
-          border-color: rgba(255,255,255,0.18);
+          background: rgba(15,23,42,0.08);
+          border-color: rgba(15,23,42,0.18);
         }
         .btn-primary:disabled, .btn-secondary:disabled, .action-btn:disabled {
           opacity: 0.5;
@@ -683,16 +708,16 @@ export default function SearchPage() {
           align-items: center;
           padding: 9px 14px;
           border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(255,255,255,0.04);
-          color: #d0d0e2;
+          border: 1px solid rgba(15,23,42,0.12);
+          background: rgba(15,23,42,0.04);
+          color: #334155;
           font-size: 13px;
           font-weight: 700;
         }
         .usage-badge.limit-hit {
-          color: #fca5a5;
-          border-color: rgba(239, 68, 68, 0.35);
-          background: rgba(239, 68, 68, 0.1);
+          color: #dc2626;
+          border-color: rgba(220,38,38, 0.35);
+          background: rgba(220,38,38, 0.1);
         }
         .layout {
           max-width: 1440px;
@@ -703,22 +728,22 @@ export default function SearchPage() {
           gap: 24px;
         }
         .card {
-          background: rgba(255,255,255,0.025);
-          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(15,23,42,0.025);
+          border: 1px solid rgba(15,23,42,0.08);
           border-radius: 20px;
           padding: 24px;
         }
         .page-heading { font-size: 28px; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 6px; }
-        .page-subheading { color: #a0a0b8; font-size: 14px; line-height: 1.7; margin-bottom: 22px; }
+        .page-subheading { color: #475569; font-size: 14px; line-height: 1.7; margin-bottom: 22px; }
         .card-title { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 6px; }
-        .card-sub { color: #a0a0b8; font-size: 14px; line-height: 1.6; margin-bottom: 18px; }
+        .card-sub { color: #475569; font-size: 14px; line-height: 1.6; margin-bottom: 18px; }
         .tab-row {
           display: inline-flex;
           gap: 6px;
           padding: 5px;
           border-radius: 12px;
-          background: rgba(255,255,255,0.04);
-          border: 1px solid rgba(255,255,255,0.07);
+          background: rgba(15,23,42,0.04);
+          border: 1px solid rgba(15,23,42,0.07);
           margin-bottom: 20px;
         }
         .tab-btn {
@@ -731,26 +756,26 @@ export default function SearchPage() {
           font-family: inherit;
           transition: all 0.18s;
           background: transparent;
-          color: #6b6b85;
+          color: #64748b;
         }
         .tab-btn.active {
-          background: rgba(79,142,247,0.15);
-          color: #f0f0f5;
-          border: 1px solid rgba(79,142,247,0.22);
+          background: rgba(37,99,235,0.15);
+          color: #0f172a;
+          border: 1px solid rgba(37,99,235,0.22);
         }
         .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
         .label {
           font-size: 12px;
           font-weight: 600;
-          color: #c8c8d8;
+          color: #334155;
           text-transform: uppercase;
           letter-spacing: 0.06em;
         }
         .input, .textarea, .select {
           width: 100%;
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.1);
-          color: #f0f0f5;
+          background: rgba(15,23,42,0.05);
+          border: 1px solid rgba(15,23,42,0.1);
+          color: #0f172a;
           border-radius: 12px;
           padding: 12px 14px;
           font-size: 14px;
@@ -758,10 +783,10 @@ export default function SearchPage() {
           font-family: inherit;
           transition: all 0.2s;
         }
-        .input::placeholder, .textarea::placeholder { color: #4a4a60; }
+        .input::placeholder, .textarea::placeholder { color: #94a3b8; }
         .input:focus, .textarea:focus, .select:focus {
-          border-color: rgba(79,142,247,0.5);
-          box-shadow: 0 0 0 3px rgba(79,142,247,0.1);
+          border-color: rgba(37,99,235,0.5);
+          box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
         }
         .textarea { resize: vertical; line-height: 1.7; min-height: 220px; }
         .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -769,7 +794,7 @@ export default function SearchPage() {
         .more-filters {
           margin-top: 14px;
           padding-top: 14px;
-          border-top: 1px solid rgba(255,255,255,0.08);
+          border-top: 1px solid rgba(15,23,42,0.08);
         }
         .filter-grid {
           display: grid;
@@ -795,9 +820,9 @@ export default function SearchPage() {
           margin-top: 14px;
           padding: 12px 16px;
           border-radius: 10px;
-          background: rgba(248,113,113,0.08);
-          border: 1px solid rgba(248,113,113,0.2);
-          color: #f87171;
+          background: rgba(220,38,38,0.08);
+          border: 1px solid rgba(220,38,38,0.2);
+          color: #dc2626;
           font-size: 13px;
           font-weight: 500;
         }
@@ -805,9 +830,9 @@ export default function SearchPage() {
           margin-top: 14px;
           padding: 12px 16px;
           border-radius: 10px;
-          background: rgba(251,191,36,0.08);
-          border: 1px solid rgba(251,191,36,0.2);
-          color: #fbbf24;
+          background: rgba(217,119,6,0.08);
+          border: 1px solid rgba(217,119,6,0.2);
+          color: #d97706;
           font-size: 13px;
           font-weight: 500;
         }
@@ -815,9 +840,9 @@ export default function SearchPage() {
           margin-top: 14px;
           padding: 14px 16px;
           border-radius: 12px;
-          background: rgba(239,68,68,0.08);
-          border: 1px solid rgba(239,68,68,0.22);
-          color: #fca5a5;
+          background: rgba(220,38,38,0.08);
+          border: 1px solid rgba(220,38,38,0.22);
+          color: #dc2626;
           font-size: 13px;
           line-height: 1.6;
         }
@@ -828,7 +853,7 @@ export default function SearchPage() {
           min-height: 620px;
         }
         .results-list {
-          border-right: 1px solid rgba(255,255,255,0.07);
+          border-right: 1px solid rgba(15,23,42,0.07);
           padding-right: 16px;
           min-height: 100%;
         }
@@ -841,7 +866,7 @@ export default function SearchPage() {
         }
         .results-count {
           font-size: 12px;
-          color: #7d7d96;
+          color: #64748b;
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.06em;
@@ -857,34 +882,34 @@ export default function SearchPage() {
         .job-item {
           padding: 16px;
           border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.07);
-          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(15,23,42,0.07);
+          background: rgba(15,23,42,0.03);
           cursor: pointer;
           transition: all 0.18s;
         }
         .job-item:hover {
-          border-color: rgba(79,142,247,0.25);
-          background: rgba(79,142,247,0.05);
+          border-color: rgba(37,99,235,0.25);
+          background: rgba(37,99,235,0.05);
         }
         .job-item.selected {
-          border-color: rgba(79,142,247,0.42);
-          background: rgba(79,142,247,0.09);
-          box-shadow: 0 0 0 1px rgba(79,142,247,0.15) inset;
+          border-color: rgba(37,99,235,0.42);
+          background: rgba(37,99,235,0.09);
+          box-shadow: 0 0 0 1px rgba(37,99,235,0.15) inset;
         }
         .job-item-title { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
-        .job-item-company { font-size: 13px; color: #d4d4e4; margin-bottom: 6px; }
+        .job-item-company { font-size: 13px; color: #334155; margin-bottom: 6px; }
         .job-item-meta {
           font-size: 12px;
-          color: #7d7d96;
+          color: #64748b;
           display: flex;
           gap: 8px;
           align-items: center;
           flex-wrap: wrap;
         }
         .job-item-badge {
-          background: rgba(79,142,247,0.1);
-          color: #4f8ef7;
-          border: 1px solid rgba(79,142,247,0.2);
+          background: rgba(37,99,235,0.1);
+          color: #2563eb;
+          border: 1px solid rgba(37,99,235,0.2);
           border-radius: 99px;
           padding: 2px 8px;
           font-size: 11px;
@@ -901,17 +926,17 @@ export default function SearchPage() {
           display: flex;
           flex-wrap: wrap;
           gap: 10px;
-          color: #9a9ab1;
+          color: #64748b;
           font-size: 13px;
           margin-bottom: 18px;
         }
         .job-description {
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(255,255,255,0.07);
+          background: rgba(15,23,42,0.03);
+          border: 1px solid rgba(15,23,42,0.07);
           border-radius: 14px;
           padding: 18px;
           font-size: 14px;
-          color: #d7d7e6;
+          color: #334155;
           line-height: 1.8;
           white-space: pre-wrap;
           min-height: 360px;
@@ -934,16 +959,16 @@ export default function SearchPage() {
           gap: 6px;
           padding: 6px 14px;
           border-radius: 99px;
-          background: rgba(52,211,153,0.12);
-          border: 1px solid rgba(52,211,153,0.25);
-          color: #34d399;
+          background: rgba(5,150,105,0.12);
+          border: 1px solid rgba(5,150,105,0.25);
+          color: #059669;
           font-size: 13px;
           font-weight: 700;
         }
         .result-tabs {
           display: flex;
           gap: 0;
-          border-bottom: 1px solid rgba(255,255,255,0.07);
+          border-bottom: 1px solid rgba(15,23,42,0.07);
           margin-bottom: 20px;
           flex-wrap: wrap;
         }
@@ -955,12 +980,12 @@ export default function SearchPage() {
           border: none;
           background: none;
           font-family: inherit;
-          color: #6b6b85;
+          color: #64748b;
           border-bottom: 2px solid transparent;
           margin-bottom: -1px;
           transition: all 0.18s;
         }
-        .result-tab.active { color: #4f8ef7; border-bottom-color: #4f8ef7; }
+        .result-tab.active { color: #2563eb; border-bottom-color: #2563eb; }
         .result-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
         .action-btn {
           padding: 9px 14px;
@@ -969,33 +994,33 @@ export default function SearchPage() {
           border: none;
         }
         .action-copy {
-          background: rgba(79,142,247,0.12);
-          color: #4f8ef7;
-          border: 1px solid rgba(79,142,247,0.2);
+          background: rgba(37,99,235,0.12);
+          color: #2563eb;
+          border: 1px solid rgba(37,99,235,0.2);
         }
         .action-download {
-          background: rgba(52,211,153,0.1);
-          color: #34d399;
-          border: 1px solid rgba(52,211,153,0.2);
+          background: rgba(5,150,105,0.1);
+          color: #059669;
+          border: 1px solid rgba(5,150,105,0.2);
         }
         .action-apply {
-          background: rgba(251,191,36,0.12);
-          color: #fbbf24;
-          border: 1px solid rgba(251,191,36,0.24);
+          background: rgba(217,119,6,0.12);
+          color: #d97706;
+          border: 1px solid rgba(217,119,6,0.24);
           text-decoration: none;
         }
         .action-new {
-          background: rgba(255,255,255,0.05);
-          color: #a0a0b8;
-          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(15,23,42,0.05);
+          color: #475569;
+          border: 1px solid rgba(15,23,42,0.1);
         }
         .result-text {
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(255,255,255,0.07);
+          background: rgba(15,23,42,0.03);
+          border: 1px solid rgba(15,23,42,0.07);
           border-radius: 14px;
           padding: 20px;
           font-size: 13px;
-          color: #c8c8d8;
+          color: #334155;
           line-height: 1.8;
           white-space: pre-wrap;
           max-height: 480px;
@@ -1009,20 +1034,20 @@ export default function SearchPage() {
           justify-content: center;
           text-align: center;
           padding: 72px 32px;
-          color: #4a4a60;
+          color: #94a3b8;
           min-height: 420px;
         }
         .empty-icon { font-size: 40px; margin-bottom: 16px; opacity: 0.5; }
-        .empty-title { font-size: 16px; font-weight: 600; color: #6b6b85; margin-bottom: 8px; }
-        .empty-sub { font-size: 13px; color: #4a4a60; line-height: 1.7; max-width: 360px; }
+        .empty-title { font-size: 16px; font-weight: 600; color: #64748b; margin-bottom: 8px; }
+        .empty-sub { font-size: 13px; color: #94a3b8; line-height: 1.7; max-width: 360px; }
         .loading-steps { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
-        .loading-step { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #a0a0b8; }
-        .loading-step.active { color: #f0f0f5; }
+        .loading-step { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569; }
+        .loading-step.active { color: #0f172a; }
         .spin {
           width: 16px;
           height: 16px;
-          border: 2px solid rgba(79,142,247,0.2);
-          border-top-color: #4f8ef7;
+          border: 2px solid rgba(37,99,235,0.2);
+          border-top-color: #2563eb;
           border-radius: 50%;
           animation: spin 0.8s linear infinite;
           flex-shrink: 0;
@@ -1031,9 +1056,9 @@ export default function SearchPage() {
         .profile-warn {
           padding: 14px 16px;
           border-radius: 12px;
-          background: rgba(251,191,36,0.07);
-          border: 1px solid rgba(251,191,36,0.18);
-          color: #fbbf24;
+          background: rgba(217,119,6,0.07);
+          border: 1px solid rgba(217,119,6,0.18);
+          color: #d97706;
           font-size: 13px;
           margin-bottom: 20px;
         }
@@ -1042,11 +1067,11 @@ export default function SearchPage() {
           right: 0;
           top: 42px;
           min-width: 170px;
-          background: #1d1d27;
-          border: 1px solid rgba(255,255,255,0.1);
+          background: #ffffff;
+          border: 1px solid rgba(15,23,42,0.1);
           border-radius: 12px;
           padding: 8px;
-          box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+          box-shadow: 0 18px 40px rgba(15,23,42,0.35);
           z-index: 20;
         }
         .download-menu button {
@@ -1054,7 +1079,7 @@ export default function SearchPage() {
           text-align: left;
           background: transparent;
           border: none;
-          color: #f0f0f5;
+          color: #0f172a;
           padding: 10px 12px;
           border-radius: 8px;
           cursor: pointer;
@@ -1062,15 +1087,113 @@ export default function SearchPage() {
           font-family: inherit;
         }
         .download-menu button:hover {
-          background: rgba(255,255,255,0.06);
+          background: rgba(15,23,42,0.06);
         }
         .download-wrap { position: relative; }
+        .match-analysis { display: flex; flex-direction: column; gap: 16px; }
+        .match-score-banner {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 18px 20px;
+          border-radius: 14px;
+          background: rgba(37,99,235,0.06);
+          border: 1px solid rgba(37,99,235,0.18);
+        }
+        .match-score-value {
+          font-size: 30px;
+          font-weight: 800;
+          letter-spacing: -0.03em;
+          color: #2563eb;
+          flex-shrink: 0;
+        }
+        .match-score-label { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 2px; }
+        .match-score-hint { font-size: 12.5px; color: #64748b; }
+        .match-section {
+          background: rgba(15,23,42,0.03);
+          border: 1px solid rgba(15,23,42,0.07);
+          border-radius: 14px;
+          padding: 18px 20px;
+        }
+        .match-section-title {
+          font-size: 12px;
+          font-weight: 700;
+          color: #334155;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          margin-bottom: 14px;
+        }
+        .match-section-tips {
+          background: rgba(5,150,105,0.06);
+          border-color: rgba(5,150,105,0.2);
+        }
+        .match-section-tips .match-section-title { color: #059669; }
+        .match-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+        .match-list li {
+          font-size: 13.5px;
+          color: #334155;
+          line-height: 1.6;
+          padding-left: 22px;
+          position: relative;
+        }
+        .match-list li::before {
+          content: '•';
+          position: absolute;
+          left: 4px;
+          color: #64748b;
+        }
+        .match-section-tips .match-list li::before {
+          content: '✓';
+          color: #059669;
+          font-size: 11px;
+          top: 2px;
+        }
+        .result-tab-add {
+          padding: 8px 14px;
+          margin: 6px 0 6px auto;
+          border-radius: 8px;
+          border: 1px dashed rgba(37,99,235,0.35);
+          background: rgba(37,99,235,0.06);
+          color: #2563eb;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.2s;
+          white-space: nowrap;
+        }
+        .result-tab-add:hover:not(:disabled) { background: rgba(37,99,235,0.12); }
+        .result-tab-add:disabled { opacity: 0.5; cursor: not-allowed; }
+        .tailor-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(15,23,42,0.55);
+          backdrop-filter: blur(6px);
+          z-index: 200;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+        }
+        .tailor-modal {
+          background: #ffffff;
+          border: 1px solid rgba(15,23,42,0.1);
+          border-radius: 20px;
+          padding: 36px 40px;
+          max-width: 420px;
+          width: 100%;
+          text-align: center;
+          box-shadow: 0 30px 80px rgba(15,23,42,0.55);
+        }
+        .tailor-modal-spinner { margin: 0 auto 20px; }
+        .tailor-modal .card-title, .tailor-modal .card-sub { text-align: center; }
+        .tailor-modal .loading-steps { text-align: left; }
         @media (max-width: 1200px) {
           .layout { grid-template-columns: 1fr; }
           .job-results-shell { grid-template-columns: 1fr; }
           .results-list {
             border-right: none;
-            border-bottom: 1px solid rgba(255,255,255,0.07);
+            border-bottom: 1px solid rgba(15,23,42,0.07);
             padding-right: 0;
             padding-bottom: 16px;
             margin-bottom: 16px;
@@ -1105,15 +1228,23 @@ export default function SearchPage() {
             </div>
             <div>
               <div className="brand-name">Applymatic</div>
-              <div style={{ color: '#6b6b85', fontSize: '12px', marginTop: 1 }}>Job Search</div>
+              <div style={{ color: '#64748b', fontSize: '12px', marginTop: 1 }}>Job Search</div>
             </div>
           </a>
 
           <div className="topbar-right">
-  <div className={`usage-badge ${hasReachedFreeLimit ? 'limit-hit' : ''}`}>
-    Current usage: {usageCount}/{FREE_LIMIT}
-  </div>
-  <a href="/dashboard" className="btn-ghost">Dashboard</a>
+            <UsageNavPill
+              supabase={supabase}
+              userId={userId}
+              className="usage-badge"
+              limitHitClassName="limit-hit"
+            />
+            {!usage.isPro && (
+              <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
+                ✨ Upgrade to Pro
+              </button>
+            )}
+            <a href="/dashboard" className="btn-ghost">Dashboard</a>
   <button type="button" className="btn-ghost" onClick={handleLogout}>
     Logout
   </button>
@@ -1133,9 +1264,36 @@ export default function SearchPage() {
               </div>
             )}
 
+            {verifyBanner === 'success' && (
+              <div className="limit-box" style={{ background: 'rgba(5,150,105,0.08)', borderColor: 'rgba(5,150,105,0.25)', color: '#059669' }}>
+                🎉 You're now on Applymatic Pro — unlimited resumes, cover letters, and thank-you emails.
+                <button
+                  type="button"
+                  onClick={dismissVerifyBanner}
+                  style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {verifyBanner === 'error' && (
+              <div className="limit-box">
+                We couldn't confirm your payment automatically. If you were charged, please contact
+                info@jauraautomation.com.
+                <button
+                  type="button"
+                  onClick={dismissVerifyBanner}
+                  style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {hasReachedFreeLimit && (
               <div className="limit-box">
-                You have used all 5 free resume generations. Upgrade to Pro for $15/month to continue with unlimited resume tailoring and full features.
+                You have used all 5 free resume generations. Upgrade to Pro for CAD $9.99/month to continue with unlimited resume tailoring and full features.
               </div>
             )}
 
@@ -1338,9 +1496,13 @@ export default function SearchPage() {
                   <button
                     className="btn-secondary"
                     onClick={() => handleTailor('paste', 'cover_letter')}
-                    disabled={isTailoring || !jobDescription.trim()}
+                    disabled={isTailoring || !jobDescription.trim() || hasReachedFreeLimit}
                   >
-                    {isTailoring && tailorAction === 'cover_letter' ? 'Working...' : 'Generate cover letter'}
+                    {hasReachedFreeLimit
+                      ? 'Upgrade to continue'
+                      : isTailoring && tailorAction === 'cover_letter'
+                      ? 'Working...'
+                      : 'Generate cover letter'}
                   </button>
 
                   {applyUrl.trim() && (
@@ -1452,9 +1614,13 @@ export default function SearchPage() {
                         <button
                           className="btn-secondary"
                           onClick={() => handleTailor('selected', 'cover_letter')}
-                          disabled={isTailoring || isLoadingJob || !activeFullJD.trim()}
+                          disabled={isTailoring || isLoadingJob || !activeFullJD.trim() || hasReachedFreeLimit}
                         >
-                          {isTailoring && tailorAction === 'cover_letter' ? 'Working...' : 'Generate cover letter'}
+                          {hasReachedFreeLimit
+                            ? 'Upgrade to continue'
+                            : isTailoring && tailorAction === 'cover_letter'
+                            ? 'Working...'
+                            : 'Generate cover letter'}
                         </button>
 
                         {currentApplyUrl && (
@@ -1499,42 +1665,13 @@ export default function SearchPage() {
               </div>
             )}
 
-            {isTailoring && (
-              <div style={{ padding: '20px 0' }}>
-                <div className="card-title" style={{ marginBottom: 6 }}>
-                  Generating tailored application...
-                </div>
-                <div className="card-sub" style={{ marginBottom: 28 }}>
-                  This usually takes 15–30 seconds.
-                </div>
-
-                <div className="loading-steps">
-                  {loadingSteps.map((step, i) => (
-                    <div
-                      className={`loading-step ${i <= loadingStepIndex ? 'active' : ''}`}
-                      key={i}
-                    >
-                      <div
-                        className="spin"
-                        style={{
-                          borderTopColor: '#4f8ef7',
-                          borderColor: i <= loadingStepIndex ? 'rgba(79,142,247,0.28)' : 'rgba(79,142,247,0.12)',
-                        }}
-                      />
-                      <span>{step}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {tailorResult && !isTailoring && (
               <>
                 <div className="result-header">
                   <div className="result-title">
                     {tailorResult.jobTitle || jobTitle || jobDetails?.title || selectedJob?.title || 'Tailored Application'}{' '}
                     {(tailorResult.company || company || jobDetails?.company || selectedJob?.company) && (
-                      <span style={{ color: '#6b6b85', fontWeight: 400, fontSize: 16 }}>
+                      <span style={{ color: '#64748b', fontWeight: 400, fontSize: 16 }}>
                         · {tailorResult.company || company || jobDetails?.company || selectedJob?.company}
                       </span>
                     )}
@@ -1547,7 +1684,7 @@ export default function SearchPage() {
                           width: 7,
                           height: 7,
                           borderRadius: '50%',
-                          background: '#34d399',
+                          background: '#059669',
                           display: 'inline-block',
                         }}
                       />
@@ -1583,9 +1720,75 @@ export default function SearchPage() {
                       Match Analysis
                     </button>
                   )}
+
+                  {!!tailorResult.resume && !tailorResult.coverLetter && (
+                    <button
+                      type="button"
+                      className="result-tab-add"
+                      onClick={() => handleTailor(tailorSource, 'cover_letter')}
+                      disabled={isTailoring || hasReachedFreeLimit}
+                    >
+                      + Tailor cover letter
+                    </button>
+                  )}
+
+                  {!!tailorResult.coverLetter && !tailorResult.resume && (
+                    <button
+                      type="button"
+                      className="result-tab-add"
+                      onClick={() => handleTailor(tailorSource, 'resume')}
+                      disabled={isTailoring || hasReachedFreeLimit}
+                    >
+                      + Tailor resume
+                    </button>
+                  )}
                 </div>
 
-                <div className="result-text">{currentResultText || 'No output generated.'}</div>
+                {activeResultTab === 'match' ? (
+                  <div className="match-analysis">
+                    {showMatchScore && (
+                      <div className="match-score-banner">
+                        <div className="match-score-value">{tailorResult.matchScore}%</div>
+                        <div className="match-score-copy">
+                          <div className="match-score-label">Current match score</div>
+                          <div className="match-score-hint">
+                            {tailorResult.matchScore >= 85
+                              ? "You're in great shape for this role."
+                              : 'Aim for 85%+ by acting on the tips below.'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {matchReasonsList.length > 0 && (
+                      <div className="match-section">
+                        <div className="match-section-title">Why this score</div>
+                        <ul className="match-list">
+                          {matchReasonsList.map((line, i) => (
+                            <li key={i}>{line}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {matchTipsList.length > 0 && (
+                      <div className="match-section match-section-tips">
+                        <div className="match-section-title">🚀 How to reach 85%+ match</div>
+                        <ul className="match-list">
+                          {matchTipsList.map((line, i) => (
+                            <li key={i}>{line}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {!matchReasonsList.length && !matchTipsList.length && (
+                      <div className="result-text">No match analysis available.</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="result-text">{currentResultText || 'No output generated.'}</div>
+                )}
 
                 <div className="result-actions">
                   <button
@@ -1657,7 +1860,7 @@ export default function SearchPage() {
                       closeDownloadMenu();
                     }}
                   >
-                    Clear result
+                    {selectedJob ? '← Back to job listings' : 'Clear result'}
                   </button>
                 </div>
               </>
@@ -1665,6 +1868,48 @@ export default function SearchPage() {
           </section>
         </main>
       </div>
+
+      {isTailoring && (
+        <div className="tailor-overlay">
+          <div className="tailor-modal">
+            <div className="spin tailor-modal-spinner" style={{ width: 28, height: 28, borderTopColor: '#2563eb' }} />
+            <div className="card-title" style={{ marginBottom: 6 }}>
+              Generating tailored application...
+            </div>
+            <div className="card-sub" style={{ marginBottom: 28 }}>
+              This usually takes 15–30 seconds.
+            </div>
+
+            <div className="loading-steps">
+              {loadingSteps.map((step, i) => (
+                <div
+                  className={`loading-step ${i <= loadingStepIndex ? 'active' : ''}`}
+                  key={i}
+                >
+                  <div
+                    className="spin"
+                    style={{
+                      borderTopColor: '#2563eb',
+                      borderColor: i <= loadingStepIndex ? 'rgba(37,99,235,0.28)' : 'rgba(37,99,235,0.12)',
+                    }}
+                  />
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <UpgradeModal
+        open={upgradeModalOpen}
+        onClose={closeUpgradeModal}
+        onConfirm={startCheckout}
+        loading={checkoutLoading}
+        error={checkoutError}
+      />
+
+      <UpgradeBanner show={!usage.isPro} onUpgradeClick={openUpgradeModal} />
     </>
   );
 }

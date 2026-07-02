@@ -1,13 +1,44 @@
 'use client';
+
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
+import '@/app/login.css';
+
+const TRUST = [
+  { c: '#2563eb', i: 'S' },
+  { c: '#059669', i: 'J' },
+  { c: '#7c3aed', i: 'M' },
+  { c: '#e8a33d', i: 'A' },
+];
+
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24">
+      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
+      <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z" />
+      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z" />
+    </svg>
+  );
+}
+
+function GithubIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="#0f172a">
+      <path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.6 9.6 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 22 12c0-5.52-4.48-10-10-10z" />
+    </svg>
+  );
+}
 
 export default function LoginPage() {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const supabase = createClient();
@@ -26,6 +57,29 @@ export default function LoginPage() {
     return () => subscription.unsubscribe();
   }, [supabase, router, mode]);
 
+  const handleOAuth = async (provider) => {
+    setError('');
+    setMessage('');
+    setOauthLoading(provider);
+
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: `${window.location.origin}/api/auth/callback` },
+    });
+
+    if (oauthError) {
+      const msg = oauthError.message || '';
+      if (msg.includes('provider is not enabled') || msg.includes('Unsupported provider')) {
+        setError(
+          `${provider === 'google' ? 'Google' : 'GitHub'} sign-in is not enabled yet. Enable it in your Supabase project under Authentication → Providers, then add the OAuth client ID and secret.`
+        );
+      } else {
+        setError(msg);
+      }
+      setOauthLoading('');
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -33,23 +87,23 @@ export default function LoginPage() {
     setMessage('');
 
     if (mode === 'login') {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
 
-      if (error) {
-        setError(error.message);
+      if (signInError) {
+        setError(signInError.message);
       } else {
         router.push('/app');
         router.refresh();
       }
     } else {
-      const { error } = await supabase.auth.signUp({
+      const { error: signUpError } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback` }
+        options: { emailRedirectTo: `${window.location.origin}/api/auth/callback` },
       });
 
-      if (error) {
-        setError(error.message);
+      if (signUpError) {
+        setError(signUpError.message);
       } else {
         setMessage('Check your email to confirm your account.');
       }
@@ -59,193 +113,212 @@ export default function LoginPage() {
   };
 
   return (
-    <>
-      <style>{`
-        @keyframes gradientShift {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
-        }
-        @keyframes floatUp {
-          0% { opacity: 0; transform: translateY(20px); }
-          100% { opacity: 1; transform: translateY(0); }
-        }
-        .login-input:focus {
-          border-color: rgba(79,142,247,0.6) !important;
-          box-shadow: 0 0 0 3px rgba(79,142,247,0.1) !important;
-        }
-        .login-btn:hover:not(:disabled) {
-          background: #6fa3ff !important;
-          transform: translateY(-1px);
-          box-shadow: 0 8px 24px rgba(79,142,247,0.35) !important;
-        }
-        .login-btn { transition: all 0.2s ease !important; }
-        .feature-item {
-          opacity: 0;
-          animation: floatUp 0.5s ease forwards;
-        }
-        .feature-item:nth-child(1) { animation-delay: 0.1s; }
-        .feature-item:nth-child(2) { animation-delay: 0.2s; }
-        .feature-item:nth-child(3) { animation-delay: 0.3s; }
-        .feature-item:nth-child(4) { animation-delay: 0.4s; }
-        .tab-btn:hover { color: var(--text) !important; }
-      `}</style>
+    <main className="login-page">
+      <div className="login-shell">
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+          <Link href="/" className="login-back">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="19" y1="12" x2="5" y2="12" />
+              <polyline points="12 19 5 12 12 5" />
+            </svg>
+            Back to home
+          </Link>
+        </motion.div>
 
-      <main style={{ minHeight: '100vh', display: 'flex', background: 'var(--bg)' }}>
-
-        <div style={{
-          flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center',
-          padding: '60px', position: 'relative', overflow: 'hidden',
-          background: 'linear-gradient(135deg, #0d1117 0%, #0a0f1e 50%, #0d1117 100%)'
-        }}>
-          <div style={{ position: 'absolute', top: '15%', left: '10%', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(79,142,247,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', bottom: '20%', right: '5%', width: '250px', height: '250px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(167,139,250,0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
-
-          <div style={{ position: 'relative', zIndex: 1, maxWidth: '480px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '56px' }}>
-              <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 20px rgba(79,142,247,0.4)' }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                </svg>
-              </div>
-              <span style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text)' }}>Applymatic</span>
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05, duration: 0.5 }}>
+          <Link href="/" className="login-brandmark">
+            <div className="login-logo-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
             </div>
+            <span className="login-logo-text">Applymatic</span>
+          </Link>
+        </motion.div>
 
-            <h1 style={{ fontSize: '42px', fontWeight: 800, lineHeight: 1.15, marginBottom: '16px', color: 'var(--text)', letterSpacing: '-0.02em' }}>
-              Land your next job<br />
-              <span style={{ background: 'linear-gradient(90deg, #4f8ef7, #a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                10× faster
-              </span>
-            </h1>
-            <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: 1.7, marginBottom: '48px', maxWidth: '380px' }}>
-              Upload your resume once. Applymatic tailors it to every job — ATS-optimized, keyword-matched, ready to send.
-            </p>
+        <motion.div
+          className="login-card"
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={mode}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22 }}
+            >
+              <h2 className="login-card-title">
+                {mode === 'login' ? 'Welcome back' : 'Create your account'}
+              </h2>
+              <p className="login-card-sub">
+                {mode === 'login'
+                  ? 'Sign in to tailor your next resume'
+                  : 'Start free — 5 AI-tailored resumes every month'}
+              </p>
+            </motion.div>
+          </AnimatePresence>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {[
-                { icon: '✦', color: '#4f8ef7', title: '5 free tailored resumes/month', sub: 'No credit card required to get started' },
-                { icon: '⚡', color: '#fbbf24', title: 'AI-tailored in under 30 seconds', sub: 'GPT-powered resume + cover letter per job' },
-                { icon: '🎯', color: '#34d399', title: 'Match score for every job', sub: 'Know your fit before you apply' },
-                { icon: '📋', color: '#a78bfa', title: 'Full application dashboard', sub: "Track every resume you've ever generated" },
-              ].map((f, i) => (
-                <div key={i} className="feature-item" style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `${f.color}18`, border: `1px solid ${f.color}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0, marginTop: '1px' }}>
-                    {f.icon}
-                  </div>
-                  <div>
-                    <p style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text)', marginBottom: '2px' }}>{f.title}</p>
-                    <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{f.sub}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ marginTop: '48px', padding: '16px 20px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ display: 'flex' }}>
-                {['#4f8ef7','#34d399','#fbbf24','#a78bfa','#f87171'].map((c, i) => (
-                  <div key={i} style={{ width: '28px', height: '28px', borderRadius: '50%', background: c, border: '2px solid var(--bg)', marginLeft: i === 0 ? 0 : '-8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white' }}>
-                    {['S','J','M','A','R'][i]}
-                  </div>
-                ))}
-              </div>
-              <div>
-                <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>Join job seekers using Applymatic</p>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Free to start · Upgrade anytime</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ width: '460px', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '60px 48px', background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}>
-          <div style={{ marginBottom: '32px' }}>
-            <h2 style={{ fontSize: '22px', fontWeight: 700, marginBottom: '6px' }}>
-              {mode === 'login' ? 'Welcome back' : 'Create your account'}
-            </h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
-              {mode === 'login' ? 'Sign in to access your dashboard' : 'Start with 5 free resumes per month'}
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', background: 'var(--surface-3)', borderRadius: 'var(--radius-sm)', padding: '4px', marginBottom: '28px', gap: '4px' }}>
-            {['login', 'signup'].map(m => (
+          <div className="login-tabs">
+            <motion.div
+              className="login-tab-indicator"
+              layout
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+              style={{
+                left: mode === 'login' ? '4px' : 'calc(50% + 2px)',
+                width: 'calc(50% - 6px)',
+              }}
+            />
+            {['login', 'signup'].map((m) => (
               <button
                 key={m}
-                className="tab-btn"
-                onClick={() => { setMode(m); setError(''); setMessage(''); }}
-                style={{ flex: 1, padding: '9px', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', border: 'none', background: mode === m ? 'var(--blue)' : 'transparent', color: mode === m ? 'white' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                className={`login-tab ${mode === m ? 'active' : ''}`}
+                onClick={() => {
+                  setMode(m);
+                  setError('');
+                  setMessage('');
+                }}
               >
                 {m === 'login' ? 'Sign In' : 'Sign Up'}
               </button>
             ))}
           </div>
 
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '7px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Email</label>
+          <div className="login-social-group">
+            <button
+              type="button"
+              className="login-social-btn"
+              onClick={() => handleOAuth('google')}
+              disabled={!!oauthLoading}
+            >
+              {oauthLoading === 'google' ? <span className="login-spinner" style={{ borderTopColor: '#2563eb', borderColor: 'rgba(37,99,235,0.25)' }} /> : <GoogleIcon />}
+              Continue with Google
+            </button>
+            <button
+              type="button"
+              className="login-social-btn"
+              onClick={() => handleOAuth('github')}
+              disabled={!!oauthLoading}
+            >
+              {oauthLoading === 'github' ? <span className="login-spinner" style={{ borderTopColor: '#0f172a', borderColor: 'rgba(15,23,42,0.25)' }} /> : <GithubIcon />}
+              Continue with GitHub
+            </button>
+          </div>
+
+          <div className="login-divider">or continue with email</div>
+
+          <form className="login-form" onSubmit={handleSubmit}>
+            <div className="login-field">
+              <label htmlFor="email">Email</label>
               <input
+                id="email"
                 type="email"
                 required
                 value={email}
-                onChange={e => setEmail(e.target.value)}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 className="login-input"
-                style={{ width: '100%', background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '11px 14px', color: 'var(--text)', fontSize: '14px', outline: 'none', fontFamily: 'inherit', transition: 'all 0.2s' }}
+                autoComplete="email"
               />
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '7px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Password</label>
+            <div className="login-field">
+              <label htmlFor="password">Password</label>
               <input
+                id="password"
                 type="password"
                 required
                 value={password}
-                onChange={e => setPassword(e.target.value)}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="login-input"
-                style={{ width: '100%', background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '11px 14px', color: 'var(--text)', fontSize: '14px', outline: 'none', fontFamily: 'inherit', transition: 'all 0.2s' }}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               />
             </div>
 
-            {error && (
-              <div style={{ background: 'var(--red-dim)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', color: 'var(--red)', fontSize: '13px' }}>
-                {error}
-              </div>
-            )}
+            <AnimatePresence>
+              {error && (
+                <motion.div
+                  className="login-alert login-alert-error"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                >
+                  {error}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-            {message && (
-              <div style={{ background: 'var(--green-dim)', border: '1px solid rgba(52,211,153,0.3)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', color: 'var(--green)', fontSize: '13px' }}>
-                {message}
-              </div>
-            )}
+            <AnimatePresence>
+              {message && (
+                <motion.div
+                  className="login-alert login-alert-success"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                >
+                  {message}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="login-btn"
-              style={{ width: '100%', background: 'var(--blue)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '12px', fontSize: '15px', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1, marginTop: '4px', fontFamily: 'inherit', letterSpacing: '0.01em' }}
-            >
-              {loading ? 'Please wait...' : mode === 'login' ? 'Sign In →' : 'Get Started Free →'}
+            <button type="submit" disabled={loading} className="login-submit">
+              {loading ? (
+                <>
+                  <span className="login-spinner" />
+                  Please wait...
+                </>
+              ) : mode === 'login' ? (
+                'Sign In →'
+              ) : (
+                'Get Started Free →'
+              )}
             </button>
           </form>
 
-          {mode === 'signup' && (
-            <div style={{ marginTop: '20px', padding: '14px 16px', background: 'rgba(79,142,247,0.06)', border: '1px solid rgba(79,142,247,0.15)', borderRadius: 'var(--radius-sm)', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-              <span style={{ color: 'var(--blue)', fontSize: '16px' }}>🎁</span>
-              <div>
-                <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)', marginBottom: '2px' }}>Free plan includes:</p>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>5 AI-tailored resumes/month · Cover letters · Match scores · Dashboard · PDF downloads</p>
-              </div>
-            </div>
-          )}
+          <AnimatePresence>
+            {mode === 'signup' && (
+              <motion.div
+                className="login-perk"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="login-perk-icon">🎁</div>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>Free plan includes:</p>
+                  <p style={{ fontSize: 12, color: 'var(--lp-muted)', lineHeight: 1.6 }}>
+                    5 AI-tailored resumes/month · Cover letters · Match scores · Dashboard · PDF downloads
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          <p style={{ color: 'var(--text-faint)', fontSize: '12px', textAlign: 'center', marginTop: '24px', lineHeight: 1.6 }}>
-            By continuing you agree to our Terms of Service.<br />No credit card required.
+          <div className="login-trust">
+            <div className="login-trust-avatars">
+              {TRUST.map((t, i) => (
+                <div key={i} className="login-trust-avatar" style={{ background: t.c }}>
+                  {t.i}
+                </div>
+              ))}
+            </div>
+            Join job seekers landing interviews faster
+          </div>
+
+          <p className="login-legal">
+            By continuing you agree to our Terms of Service.
+            <br />
+            No credit card required.
           </p>
-        </div>
-      </main>
-    </>
+        </motion.div>
+      </div>
+    </main>
   );
 }
