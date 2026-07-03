@@ -4,9 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
+import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/login.css';
-
-const CONTACT_EMAIL = 'info@jauraautomation.com';
 
 export default function ContactPage() {
   const [name, setName] = useState('');

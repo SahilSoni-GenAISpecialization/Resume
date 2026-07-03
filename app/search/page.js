@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
+import { CONTACT_EMAIL } from '@/lib/site-config';
 
 export default function SearchPage() {
   return (
@@ -1279,8 +1280,8 @@ function SearchPageContent() {
 
             {verifyBanner === 'error' && (
               <div className="limit-box">
-                We couldn't confirm your payment automatically. If you were charged, please contact
-                info@jauraautomation.com.
+                We couldn&apos;t confirm your payment automatically. If you were charged, please contact{' '}
+                {CONTACT_EMAIL}.
                 <button
                   type="button"
                   onClick={dismissVerifyBanner}

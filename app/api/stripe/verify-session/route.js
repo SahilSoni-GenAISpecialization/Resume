@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe';
 import { applySubscriptionToProfile, readSubscriptionFromProfile } from '@/lib/stripe-profile';
+import { CONTACT_EMAIL } from '@/lib/site-config';
 
 export async function GET(request) {
   try {
@@ -57,7 +58,7 @@ export async function GET(request) {
       return NextResponse.json(
         {
           error:
-            'Payment succeeded but could not update your account (likely missing `profiles` columns — run the Pro subscription SQL migration in Supabase, then contact support if it persists).',
+            `Payment succeeded but could not update your account (likely missing \`profiles\` columns — run the Pro subscription SQL migration in Supabase, then email ${CONTACT_EMAIL} if it persists).`,
         },
         { status: 500 }
       );

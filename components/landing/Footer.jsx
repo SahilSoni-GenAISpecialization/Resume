@@ -1,6 +1,7 @@
 'use client';
 
 import ScrollReveal from './ScrollReveal';
+import { CONTACT_EMAIL } from '@/lib/site-config';
 
 export default function Footer() {
   return (
@@ -35,6 +36,7 @@ export default function Footer() {
           <p style={{ color: 'var(--lp-faint)', fontSize: 13 }}>© 2026 Applymatic. All rights reserved.</p>
           <div className="lp-footer-links">
             <a href="/contact">Contact</a>
+            <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
           </div>
         </div>
       </footer>

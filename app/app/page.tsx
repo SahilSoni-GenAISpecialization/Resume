@@ -26,6 +26,7 @@ import {
 import { RevealSection } from '@/components/app/profile-ui';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
+import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 
 type ViewMode = 'setup' | 'search';
@@ -549,7 +550,7 @@ export default function AppDashboardPage() {
 
       {verifyBanner === 'error' && (
         <div className="app-status app-status-error" style={{ position: 'fixed', top: 90, right: 24, zIndex: 190, maxWidth: 360 }}>
-          We couldn't confirm your payment automatically. Contact info@jauraautomation.com if you were charged.
+          We couldn't confirm your payment automatically. Contact {CONTACT_EMAIL} if you were charged.
           <button
             type="button"
             onClick={dismissVerifyBanner}

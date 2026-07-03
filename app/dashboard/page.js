@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
+import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 
 const FREE_TIER_LIMIT = FREE_RESUME_LIMIT;
@@ -566,7 +567,7 @@ export default function DashboardPage() {
                   {syncingSub ? 'Checking Stripe...' : 'Retry: sync subscription status'}
                 </button>
                 <span style={{ fontSize: 12, color: '#64748b' }}>
-                  Still stuck? Contact info@jauraautomation.com.
+                  Still stuck? Contact {CONTACT_EMAIL}.
                 </span>
               </div>
               {!!syncMessage && <div style={{ marginTop: 8, fontSize: 12.5 }}>{syncMessage}</div>}
