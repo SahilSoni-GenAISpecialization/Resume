@@ -4,6 +4,9 @@ import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
 
+export const maxDuration = 120;
+export const dynamic = 'force-dynamic';
+
 export async function POST(request) {
   try {
     const contentType = request.headers.get('content-type') || '';
@@ -40,7 +43,12 @@ export async function POST(request) {
 
     if (!isPro && count >= FREE_RESUME_LIMIT) {
       return NextResponse.json(
-        { error: 'FREE_LIMIT_REACHED', count },
+        {
+          error: 'FREE_LIMIT_REACHED',
+          message:
+            'You have used all 5 free resume/cover letter generations this month. Upgrade to Pro for CAD $9.99/month to continue.',
+          count,
+        },
         { status: 403 }
       );
     }

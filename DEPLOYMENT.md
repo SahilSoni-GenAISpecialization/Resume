@@ -176,6 +176,7 @@ server {
     server_name applymatic.ca www.applymatic.ca;
 
     location / {
+        client_max_body_size 10M;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -219,6 +220,15 @@ Choose redirect HTTP → HTTPS when prompted.
 
 ## Updating the live site later
 
+SSH into your VPS, then:
+
+```bash
+cd /var/www/applymatic   # or your app folder
+bash scripts/deploy.sh
+```
+
+Or manually:
+
 ```bash
 cd /var/www/applymatic
 git pull origin main
@@ -227,14 +237,51 @@ npm run build
 pm2 restart applymatic
 ```
 
+**Important:** Uploading files via Hostinger File Manager or FTP is **not enough**. You must run `npm ci`, `npm run build`, and restart PM2 on the server every time you deploy.
+
 ---
 
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
+| **503 Service Unavailable** | App is not running. SSH in and run the steps below. |
 | OAuth redirect error | Add production callback URLs in Supabase |
 | Stripe checkout wrong domain | Set `NEXT_PUBLIC_SITE_URL=https://applymatic.ca` on server, rebuild |
 | Pro not unlocking | Run SQL migration; click “Sync status”; check `SUPABASE_SERVICE_ROLE_KEY` |
-| 502 Bad Gateway | `pm2 logs applymatic` — app likely crashed or not running |
-| Job search empty | Check `JSEARCH_API_KEY` on server |
+| 502 Bad Gateway | Same as 503 — `pm2 logs applymatic` |
+| **403 / "Forbidden" on tailor** | Request blocked before Next.js (Hostinger WAF) or free limit hit. Add `client_max_body_size 10M;` in nginx. Ensure `ANTHROPIC_API_KEY` is set. Check `pm2 logs applymatic` while tailoring. |
+| Build runs out of memory | Add swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
+
+### Fix 503 — run these on your VPS (SSH)
+
+```bash
+cd /var/www/applymatic          # adjust path if different
+pm2 status                      # is applymatic "online"?
+pm2 logs applymatic --lines 80  # read the error
+
+# Full redeploy:
+git pull origin main
+npm ci
+npm run build                   # must finish without errors
+pm2 restart applymatic
+curl -I http://127.0.0.1:3000   # should return HTTP 200 or 307
+
+# If pm2 shows "errored" or build failed:
+pm2 delete applymatic
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+Check `.env.production` exists in the app folder and includes at least:
+
+```env
+NEXT_PUBLIC_SITE_URL=https://applymatic.ca
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+If `npm run build` fails with **JavaScript heap out of memory**, add 2GB swap (see table above) and rebuild.
+
+If you use **Hostinger Business shared hosting** (not VPS), Node.js/PM2 may not be supported — you need a **VPS** plan or Hostinger’s Node.js hosting with SSH access.

@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import { CONTACT_EMAIL } from '@/lib/site-config';
+import { getApiErrorMessage, readApiJson } from '@/lib/api-response';
+import { flattenProfileForAi } from '@/lib/profile-data';
 
 export default function SearchPage() {
   return (
@@ -398,11 +400,16 @@ function SearchPageContent() {
         setTailorResult(null);
       }
 
+      if (!profile) {
+        throw new Error('Your saved profile is missing. Complete your profile on the Profile page first.');
+      }
+
       const res = await fetch('/api/tailor-resume', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          profile,
+          profile: flattenProfileForAi(profile),
           jobDescription: jd,
           jobTitle: title,
           company: comp,
@@ -411,8 +418,10 @@ function SearchPageContent() {
         }),
       });
 
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Tailoring failed');
+      const { json, text } = await readApiJson(res);
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(res, json, text));
+      }
 
       const resolvedApplyUrl = json.applyUrl || finalApplyUrl || '';
 
