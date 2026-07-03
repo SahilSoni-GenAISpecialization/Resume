@@ -22,6 +22,9 @@ const EMPTY_USAGE: ResumeUsage = {
 type UsageNavPillProps = {
   supabase: SupabaseClient;
   userId?: string | null;
+  /** Pass from the parent page hook so nav + page share one usage source. */
+  usage?: ResumeUsage;
+  usageLoading?: boolean;
   className?: string;
   limitHitClassName?: string;
 };
@@ -42,16 +45,22 @@ export function useResumeUsage(supabase: SupabaseClient, userId?: string | null)
 
     async function load() {
       setLoading(true);
-      const stats = await fetchMonthlyResumeUsage(supabase, activeUserId);
-      if (!cancelled) {
-        setUsage(stats);
-        setLoading(false);
+      try {
+        const stats = await fetchMonthlyResumeUsage(supabase, activeUserId);
+        if (!cancelled) {
+          setUsage(stats);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     load();
 
     const refresh = () => {
+      cancelled = false;
       load();
     };
 
@@ -61,20 +70,38 @@ export function useResumeUsage(supabase: SupabaseClient, userId?: string | null)
     };
     document.addEventListener('visibilitychange', onVisibility);
 
+    // Browser back/forward cache can restore the page with loading stuck mid-fetch
+    // (e.g. after returning from Stripe checkout). Re-fetch when that happens.
+    const onPageShow = (event: Event) => {
+      if (!(event as PageTransitionEvent).persisted) return;
+      cancelled = false;
+      load();
+    };
+    window.addEventListener('pageshow', onPageShow);
+
     return () => {
       cancelled = true;
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onPageShow);
     };
   }, [supabase, userId]);
+
+  async function refreshUsage() {
+    if (!userId) return;
+    setLoading(true);
+    try {
+      const stats = await fetchMonthlyResumeUsage(supabase, userId);
+      setUsage(stats);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return {
     usage,
     loading,
-    refresh: () => {
-      if (!userId) return Promise.resolve();
-      return fetchMonthlyResumeUsage(supabase, userId).then(setUsage);
-    },
+    refresh: refreshUsage,
     /** Immediately reflect Pro after Stripe checkout, before profile fetch completes. */
     markPro: () =>
       setUsage((prev) => ({
@@ -101,10 +128,14 @@ export function useResumeUsage(supabase: SupabaseClient, userId?: string | null)
 export default function UsageNavPill({
   supabase,
   userId,
+  usage: usageProp,
+  usageLoading,
   className = 'app-usage-pill',
   limitHitClassName = '',
 }: UsageNavPillProps) {
-  const { usage, loading } = useResumeUsage(supabase, userId);
+  const internal = useResumeUsage(supabase, usageProp ? null : userId);
+  const usage = usageProp ?? internal.usage;
+  const loading = usageLoading ?? internal.loading;
   const atLimit = !usage.isPro && usage.used >= usage.limit;
 
   // Hide the usage pill for active (non-cancelling) Pro users. Keep it visible when the

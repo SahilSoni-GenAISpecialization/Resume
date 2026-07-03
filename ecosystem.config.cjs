@@ -4,7 +4,7 @@ module.exports = {
     {
       name: 'applymatic',
       script: 'node_modules/next/dist/bin/next',
-      args: 'start -p 3000',
+      args: 'start -p 3000 -H 0.0.0.0',
       cwd: __dirname,
       instances: 1,
       autorestart: true,

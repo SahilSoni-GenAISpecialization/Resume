@@ -58,6 +58,15 @@ alter table profiles
 
 Ensure `profiles`, `applications`, `user_usage` tables exist with RLS policies for authenticated users.
 
+Add thank-you email storage on applications (run once in Supabase SQL editor):
+
+```sql
+alter table applications
+  add column if not exists thank_you_email text;
+```
+
+The dashboard uses `tailored_resume`, `cover_letter`, and `thank_you_email` to show green “saved” buttons per application.
+
 ---
 
 ### 5. Stripe — switch to LIVE mode for production

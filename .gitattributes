@@ -1,0 +1,9 @@
+# Keep source files UTF-8 with LF line endings across Windows/macOS/Linux.
+* text=auto eol=lf
+*.tsx text eol=lf
+*.ts text eol=lf
+*.jsx text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf

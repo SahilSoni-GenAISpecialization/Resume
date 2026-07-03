@@ -46,7 +46,7 @@ export default function AppDashboardPage() {
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [saveMessage, setSaveMessage] = useState('');
-  const { usage, refresh: refreshUsage, markPro } = useResumeUsage(supabase, user?.id);
+  const { usage, loading: usageLoading, refresh: refreshUsage, markPro } = useResumeUsage(supabase, user?.id);
   const {
     modalOpen: upgradeModalOpen,
     openModal: openUpgradeModal,
@@ -64,6 +64,8 @@ export default function AppDashboardPage() {
   const completion = useMemo(() => profileCompletionPercent(profile), [profile]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadUser() {
       setIsLoadingProfile(true);
 
@@ -71,6 +73,8 @@ export default function AppDashboardPage() {
         data: { user: authUser },
         error: authError,
       } = await supabase.auth.getUser();
+
+      if (cancelled) return;
 
       if (authError || !authUser) {
         window.location.href = '/login';
@@ -84,6 +88,8 @@ export default function AppDashboardPage() {
         .select('*')
         .eq('id', authUser.id)
         .maybeSingle();
+
+      if (cancelled) return;
 
       if (!profileError && row) {
         const structured = profileRowToStructured(row, authUser.email || '');
@@ -99,6 +105,16 @@ export default function AppDashboardPage() {
     }
 
     loadUser();
+
+    function handlePageShow(event: PageTransitionEvent) {
+      if (event.persisted) loadUser();
+    }
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pageshow', handlePageShow);
+    };
   }, [supabase]);
 
   async function handleResumeUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -243,16 +259,22 @@ export default function AppDashboardPage() {
                 <span>
                   {profile.personal.firstName} {profile.personal.lastName}
                 </span>
-                <span style={{ color: 'var(--app-green)', fontSize: 11 }}>Γ£ô Saved</span>
+                <span style={{ color: 'var(--app-green)', fontSize: 11 }}>{'\u2713'} Saved</span>
               </motion.div>
             )}
           </AnimatePresence>
 
-          <UsageNavPill supabase={supabase} userId={user?.id} limitHitClassName="limit-hit" />
+          <UsageNavPill
+            supabase={supabase}
+            userId={user?.id}
+            usage={usage}
+            usageLoading={usageLoading}
+            limitHitClassName="limit-hit"
+          />
 
           {!usage.isPro && (
             <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
-              Γ£¿ Upgrade to Pro
+              {'\u2728'} Upgrade to Pro
             </button>
           )}
 
@@ -335,7 +357,7 @@ export default function AppDashboardPage() {
                 <RevealSection className="app-upload-box">
                   <div style={{ fontWeight: 700, marginBottom: 8 }}>Upload your existing resume</div>
                   <p style={{ color: 'var(--app-muted)', fontSize: 14, lineHeight: 1.7, marginBottom: 16 }}>
-                    PDF or DOCX ΓÇö we parse experience, education, certifications, licenses, skills, and projects into editable fields.
+                    PDF or DOCX {'\u2014'} we parse experience, education, certifications, licenses, skills, and projects into editable fields.
                   </p>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <label className="app-btn app-btn-primary" htmlFor="resumeUpload" style={{ cursor: 'pointer' }}>
@@ -416,7 +438,7 @@ export default function AppDashboardPage() {
                   <div className="app-section-head">
                     <div>
                       <h2 className="app-section-title">Skills</h2>
-                      <p className="app-section-desc">Type a skill and click Add ΓÇö hover to remove.</p>
+                      <p className="app-section-desc">Type a skill and click Add {'\u2014'} hover to remove.</p>
                     </div>
                   </div>
                   <SkillsFields profile={profile} onChange={setProfile} disabled={isLoadingProfile} />
@@ -484,7 +506,7 @@ export default function AppDashboardPage() {
                   Which dream job are you looking for today?
                 </h2>
                 <p className="app-search-hero-sub">
-                  Tell us the role and company you have in mind ΓÇö we&apos;ll take you straight to job search with your filters pre-filled.
+                  Tell us the role and company you have in mind {'\u2014'} we&apos;ll take you straight to job search with your filters pre-filled.
                 </p>
               </motion.div>
 
@@ -528,7 +550,7 @@ export default function AppDashboardPage() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
               >
-                Start new search ΓåÆ
+                Start new search {'\u2192'}
               </motion.button>
             </div>
           </motion.div>
@@ -537,13 +559,13 @@ export default function AppDashboardPage() {
 
       {verifyBanner === 'success' && (
         <div className="app-status app-status-success" style={{ position: 'fixed', top: 90, right: 24, zIndex: 190, maxWidth: 360 }}>
-          ≡ƒÄë You're now on Applymatic Pro ΓÇö unlimited resumes, cover letters, and thank-you emails.
+          {'\u{1F389}'} You&apos;re now on Applymatic Pro {'\u2014'} unlimited resumes, cover letters, and thank-you emails.
           <button
             type="button"
             onClick={dismissVerifyBanner}
             style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
           >
-            Γ£ò
+            {'\u2715'}
           </button>
         </div>
       )}
@@ -556,7 +578,7 @@ export default function AppDashboardPage() {
             onClick={dismissVerifyBanner}
             style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}
           >
-            Γ£ò
+            {'\u2715'}
           </button>
         </div>
       )}

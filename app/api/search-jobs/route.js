@@ -43,6 +43,7 @@ export async function POST(request) {
       remoteType,
       experienceLevel,
       sortBy,
+      page: pageRaw,
     } = await request.json();
 
     if (!query?.trim()) {
@@ -66,8 +67,11 @@ export async function POST(request) {
       ? `${baseQuery} in ${location.trim()}`
       : baseQuery;
 
+    const page = Math.max(1, Number.parseInt(String(pageRaw ?? 1), 10) || 1);
+    const PAGE_SIZE = 10;
+
     url.searchParams.set('query', queryWithLocation);
-    url.searchParams.set('page', '1');
+    url.searchParams.set('page', String(page));
     url.searchParams.set('num_pages', '1');
 
     if (datePosted) {
@@ -101,7 +105,10 @@ export async function POST(request) {
       );
     }
 
-    let jobs = (json.data || []).map((job) => ({
+    const rawJobs = json.data || [];
+    const hasMore = rawJobs.length >= PAGE_SIZE;
+
+    let jobs = rawJobs.map((job) => ({
       jobId: job.job_id || '',
       title: job.job_title || '',
       company: job.employer_name || '',
@@ -159,6 +166,9 @@ export async function POST(request) {
     return NextResponse.json({
       jobs,
       meta: {
+        page,
+        pageSize: PAGE_SIZE,
+        hasMore,
         total: jobs.length,
         companyFilter: company || '',
         companyFilterApplied,

@@ -3,6 +3,7 @@ import { createClaudeJson, getUserFacingAiError, isAiConfigured } from '@/lib/an
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
+import { saveThankYouEmailToApplication } from '@/lib/thank-you-storage';
 
 export async function POST(request) {
   try {
@@ -51,7 +52,7 @@ export async function POST(request) {
     }
 
     const body = await request.json();
-    const { profile, company, jobTitle, interviewDetails } = body || {};
+    const { profile, company, jobTitle, interviewDetails, applicationId } = body || {};
 
     if (!company || !jobTitle) {
       return NextResponse.json(
@@ -124,9 +125,37 @@ ${details || 'None provided — write a professional, slightly general thank-you
       console.error('USAGE UPSERT ERROR:', usageError);
     }
 
+    let savedToApplication = false;
+
+    if (applicationId) {
+      const { data: existingApp } = await supabase
+        .from('applications')
+        .select('notes')
+        .eq('id', applicationId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      const saveResult = await saveThankYouEmailToApplication(
+        supabase,
+        applicationId,
+        user.id,
+        {
+          subject: parsed.subject || `Thank You – ${jobTitle} Interview`,
+          body: parsed.body || '',
+        },
+        existingApp?.notes || ''
+      );
+
+      savedToApplication = saveResult.saved;
+      if (!saveResult.saved) {
+        console.error('THANK YOU SAVE ERROR:', saveResult.error || 'unknown');
+      }
+    }
+
     return NextResponse.json({
       subject: parsed.subject || `Thank You – ${jobTitle} Interview`,
       body: parsed.body || '',
+      savedToApplication,
       usage: {
         count: count + 1,
         limit: isPro ? 'unlimited' : FREE_RESUME_LIMIT,

@@ -228,20 +228,67 @@ ${cleanedJobDescription.slice(0, 8000)}`,
       cover_letter: normalizedMode === 'cover_letter' ? coverLetter : null,
       match_score: normalizedMode === 'resume' ? matchScore : null,
       status: normalizedMode === 'resume' ? 'resume_generated' : 'cover_letter_generated',
-      job_title: jobTitle || null,
-      company: company || null,
+      job_title: jobTitle || 'Unknown',
+      company: company || 'Unknown',
       job_description: cleanedJobDescription,
+      apply_url: applyUrl || null,
     };
 
-    const { error: applicationError } = await supabase
-      .from('applications')
-      .insert(insertPayload);
+    const safeCompany = insertPayload.company;
+    const safeTitle = insertPayload.job_title;
 
-    if (applicationError) {
-      return NextResponse.json(
-        { error: applicationError.message || 'Failed to save application.' },
-        { status: 500 }
-      );
+    const { data: existingRows } = await supabase
+      .from('applications')
+      .select('id, tailored_resume, cover_letter, match_score')
+      .eq('user_id', user.id)
+      .eq('company', safeCompany)
+      .eq('job_title', safeTitle)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const existing = existingRows?.[0];
+    let applicationId = existing?.id || null;
+
+    if (existing) {
+      const updatePayload = {
+        job_description: cleanedJobDescription,
+        apply_url: applyUrl || undefined,
+        status: insertPayload.status,
+      };
+
+      if (normalizedMode === 'resume') {
+        updatePayload.tailored_resume = resumeText;
+        updatePayload.match_score = matchScore;
+      } else {
+        updatePayload.cover_letter = coverLetter;
+      }
+
+      const { error: applicationError } = await supabase
+        .from('applications')
+        .update(updatePayload)
+        .eq('id', existing.id);
+
+      if (applicationError) {
+        return NextResponse.json(
+          { error: applicationError.message || 'Failed to save application.' },
+          { status: 500 }
+        );
+      }
+    } else {
+      const { data: inserted, error: applicationError } = await supabase
+        .from('applications')
+        .insert(insertPayload)
+        .select('id')
+        .single();
+
+      if (applicationError) {
+        return NextResponse.json(
+          { error: applicationError.message || 'Failed to save application.' },
+          { status: 500 }
+        );
+      }
+
+      applicationId = inserted?.id || null;
     }
 
     const { error: usageError } = await supabase.from('user_usage').upsert(
@@ -267,6 +314,7 @@ ${cleanedJobDescription.slice(0, 8000)}`,
   company: company || null,
   applyUrl: applyUrl || null,
   mode: normalizedMode,
+  applicationId,
   usage: {
     count: count + 1,
     limit: isPro ? 'unlimited' : FREE_RESUME_LIMIT,

@@ -6,6 +6,20 @@ import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import { CONTACT_EMAIL } from '@/lib/site-config';
+import { getApiErrorMessage, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
+import { profileForTailorRequest } from '@/lib/profile-data';
+import {
+  countSavedGenerations,
+  hasCoverLetter,
+  hasTailoredResume,
+  hasThankYouEmail,
+  searchUrlForApplication,
+} from '@/lib/application-docs';
+import {
+  applicationWithThankYou,
+  getStoredThankYouEmail,
+  saveThankYouEmailToApplication,
+} from '@/lib/thank-you-storage';
 import '@/app/app.css';
 
 const FREE_TIER_LIMIT = FREE_RESUME_LIMIT;
@@ -57,7 +71,7 @@ export default function DashboardPage() {
   const [managingBilling, setManagingBilling] = useState(false);
   const [syncingSub, setSyncingSub] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
-  const { usage, refresh: refreshUsage, bump: bumpUsage, markPro } = useResumeUsage(supabase, userId);
+  const { usage, loading: usageLoading, refresh: refreshUsage, markPro } = useResumeUsage(supabase, userId);
   const {
     modalOpen: upgradeModalOpen,
     openModal: openUpgradeModal,
@@ -76,6 +90,21 @@ export default function DashboardPage() {
     error: '',
     result: null,
     copied: false,
+  });
+  const [docViewer, setDocViewer] = useState({
+    open: false,
+    title: '',
+    content: '',
+    copied: false,
+  });
+  const [tailorWizard, setTailorWizard] = useState({
+    open: false,
+    app: null,
+    type: 'resume',
+    step: 'prompt',
+    jobDescription: '',
+    loading: false,
+    error: '',
   });
 
   useEffect(() => {
@@ -169,6 +198,7 @@ export default function DashboardPage() {
 
   const usagePct = usage.isPro ? 100 : Math.min((usage.used / FREE_TIER_LIMIT) * 100, 100);
   const usageLeft = usage.isPro ? Infinity : Math.max(FREE_TIER_LIMIT - usage.used, 0);
+  const savedGenerations = useMemo(() => countSavedGenerations(applications), [applications]);
 
   const filtered =
     statusFilter === 'This month'
@@ -284,11 +314,160 @@ export default function DashboardPage() {
   }
 
   function openThankYou(app) {
-    setThankYou({ open: true, app, details: '', loading: false, error: '', result: null, copied: false });
+    const saved = getStoredThankYouEmail(app);
+    setThankYou({
+      open: true,
+      app,
+      details: '',
+      loading: false,
+      error: '',
+      result: saved,
+      copied: false,
+    });
   }
 
   function closeThankYou() {
     setThankYou({ open: false, app: null, details: '', loading: false, error: '', result: null, copied: false });
+  }
+
+  function openDocViewer(app, type) {
+    const title =
+      type === 'resume'
+        ? `Tailored resume — ${app.job_title} at ${app.company}`
+        : `Cover letter — ${app.job_title} at ${app.company}`;
+    const content = type === 'resume' ? app.tailored_resume : app.cover_letter;
+    setDocViewer({ open: true, title, content: content || '', copied: false });
+  }
+
+  function closeDocViewer() {
+    setDocViewer({ open: false, title: '', content: '', copied: false });
+  }
+
+  function handleCopyDoc() {
+    if (!docViewer.content) return;
+    navigator.clipboard.writeText(docViewer.content);
+    setDocViewer((d) => ({ ...d, copied: true }));
+    setTimeout(() => setDocViewer((d) => ({ ...d, copied: false })), 2000);
+  }
+
+  function tailorWizardLabel(type) {
+    return type === 'cover' ? 'cover letter' : 'tailored resume';
+  }
+
+  function tailorWizardTitle(type) {
+    return type === 'cover' ? 'Cover letter' : 'Tailored resume';
+  }
+
+  function openTailorWizard(app, type) {
+    const savedDescription = String(app.job_description || '').trim();
+    setTailorWizard({
+      open: true,
+      app,
+      type,
+      step: savedDescription ? 'prompt' : 'needs_jd',
+      jobDescription: savedDescription,
+      loading: false,
+      error: '',
+    });
+  }
+
+  function closeTailorWizard() {
+    setTailorWizard({
+      open: false,
+      app: null,
+      type: 'resume',
+      step: 'prompt',
+      jobDescription: '',
+      loading: false,
+      error: '',
+    });
+  }
+
+  async function handleTailorGenerate() {
+    const { app, type, jobDescription } = tailorWizard;
+    if (!app) return;
+
+    const jd = String(jobDescription || '').trim();
+    if (!jd) {
+      setTailorWizard((w) => ({ ...w, step: 'needs_jd', error: 'Job description is required to generate this document.' }));
+      return;
+    }
+
+    if (!profile) {
+      setTailorWizard((w) => ({
+        ...w,
+        error: 'Your saved profile is missing. Complete your profile first, then try again.',
+      }));
+      return;
+    }
+
+    if (!usage.isPro && usage.used >= usage.limit) {
+      setTailorWizard((w) => ({ ...w, error: FREE_LIMIT_MESSAGE }));
+      return;
+    }
+
+    setTailorWizard((w) => ({ ...w, loading: true, error: '' }));
+
+    try {
+      const mode = type === 'cover' ? 'cover_letter' : 'resume';
+      const res = await fetch('/api/tailor-resume', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile: profileForTailorRequest(profile),
+          jobDescription: sanitizeJobDescription(jd),
+          jobTitle: String(app.job_title || '').slice(0, 300),
+          company: String(app.company || '').slice(0, 200),
+          applyUrl: String(app.apply_url || '').slice(0, 500),
+          mode,
+        }),
+      });
+
+      const { json, text } = await readApiJson(res);
+      if (!res.ok) {
+        if (json?.error === 'FREE_LIMIT_REACHED') {
+          await refreshUsage();
+        }
+        throw new Error(getApiErrorMessage(res, json, text));
+      }
+
+      const content = type === 'cover' ? json.coverLetter || '' : json.resume || '';
+      const appId = app.id;
+
+      setApplications((prev) =>
+        prev.map((a) => {
+          if (a.id !== appId) return a;
+          if (type === 'cover') {
+            return { ...a, cover_letter: content, job_description: jd };
+          }
+          return {
+            ...a,
+            tailored_resume: content,
+            match_score: json.matchScore ?? a.match_score,
+            job_description: jd,
+          };
+        })
+      );
+
+      closeTailorWizard();
+      openDocViewer(
+        {
+          ...app,
+          tailored_resume: type === 'resume' ? content : app.tailored_resume,
+          cover_letter: type === 'cover' ? content : app.cover_letter,
+        },
+        type
+      );
+    } catch (err) {
+      setTailorWizard((w) => ({
+        ...w,
+        loading: false,
+        error: err.message || 'Something went wrong.',
+      }));
+    } finally {
+      refreshUsage();
+    }
   }
 
   async function handleGenerateThankYou() {
@@ -303,7 +482,6 @@ export default function DashboardPage() {
     }
 
     setThankYou((t) => ({ ...t, loading: true, error: '' }));
-    bumpUsage();
 
     try {
       const res = await fetch('/api/generate-thank-you-email', {
@@ -314,6 +492,7 @@ export default function DashboardPage() {
           company: thankYou.app.company,
           jobTitle: thankYou.app.job_title,
           interviewDetails: thankYou.details,
+          applicationId: thankYou.app.id,
         }),
       });
 
@@ -326,10 +505,27 @@ export default function DashboardPage() {
         );
       }
 
+      const result = { subject: json.subject || '', body: json.body || '' };
+      const appId = thankYou.app.id;
+      const saveMeta = await saveThankYouEmailToApplication(
+        supabase,
+        appId,
+        userId,
+        result,
+        thankYou.app.notes || ''
+      );
+
+      setApplications((prev) =>
+        prev.map((a) =>
+          a.id === appId ? applicationWithThankYou(a, result, saveMeta) : a
+        )
+      );
+
       setThankYou((t) => ({
         ...t,
         loading: false,
-        result: { subject: json.subject || '', body: json.body || '' },
+        result,
+        error: saveMeta.saved ? '' : 'Email generated but could not be saved to your account. Please try again.',
       }));
     } catch (err) {
       setThankYou((t) => ({ ...t, loading: false, error: err.message || 'Something went wrong.' }));
@@ -421,6 +617,21 @@ export default function DashboardPage() {
         .icon-btn.danger:hover { background: rgba(220,38,38,0.1); color: #dc2626; border-color: rgba(220,38,38,0.2); }
         .icon-btn.edit:hover { background: rgba(37,99,235,0.1); color: #2563eb; border-color: rgba(37,99,235,0.2); }
         .icon-btn.thank:hover { background: rgba(124,58,237,0.1); color: #7c3aed; border-color: rgba(124,58,237,0.2); }
+        .icon-btn.generated { background: rgba(5,150,105,0.12); border-color: rgba(5,150,105,0.32); color: #059669; font-weight: 600; }
+        .icon-btn.generated:hover { background: rgba(5,150,105,0.18); color: #047857; border-color: rgba(5,150,105,0.45); }
+        .gen-legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 0 20px 14px; font-size: 11.5px; color: #64748b; }
+        .gen-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+        .gen-legend-dot { width: 10px; height: 10px; border-radius: 4px; border: 1px solid rgba(15,23,42,0.1); background: rgba(15,23,42,0.04); }
+        .gen-legend-dot.saved { background: rgba(5,150,105,0.15); border-color: rgba(5,150,105,0.35); }
+        .doc-preview { width: 100%; min-height: 320px; max-height: 60vh; overflow: auto; background: rgba(15,23,42,0.04); border: 1px solid rgba(15,23,42,0.08); border-radius: 10px; padding: 14px; font-size: 13px; line-height: 1.65; white-space: pre-wrap; color: #334155; font-family: inherit; }
+        .wizard-card { background: rgba(15,23,42,0.03); border: 1px solid rgba(15,23,42,0.08); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+        .wizard-lead { font-size: 14px; line-height: 1.65; color: #334155; margin-bottom: 14px; }
+        .wizard-role { font-weight: 700; color: #0f172a; }
+        .wizard-company { font-weight: 700; color: #2563eb; }
+        .wizard-cta { width: 100%; justify-content: center; margin-top: 4px; }
+        .wizard-secondary { font-size: 12.5px; color: #64748b; text-align: center; margin-top: 14px; }
+        .wizard-secondary a { color: #2563eb; font-weight: 600; text-decoration: none; }
+        .wizard-secondary a:hover { text-decoration: underline; }
 
         .ai-note { background: rgba(37,99,235,0.08); border: 1px solid rgba(37,99,235,0.2); color: #1d4ed8; padding: 12px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.6; margin-bottom: 16px; }
         .error-note { background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.2); color: #dc2626; padding: 10px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 12px; }
@@ -482,7 +693,14 @@ export default function DashboardPage() {
           </a>
 
           <div className="topbar-right">
-            <UsageNavPill supabase={supabase} userId={userId} className="usage-badge" limitHitClassName="limit-hit" />
+            <UsageNavPill
+              supabase={supabase}
+              userId={userId}
+              usage={usage}
+              usageLoading={usageLoading}
+              className="usage-badge"
+              limitHitClassName="limit-hit"
+            />
             {!loading && !usage.isPro && (
               <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
                 ✨ Upgrade to Pro
@@ -635,6 +853,16 @@ export default function DashboardPage() {
                     <div className="kpi-sub" style={{ marginTop: 6 }}>
                       {loading ? '' : usageLeft > 0 ? `${usageLeft} generations remaining` : 'Limit reached — upgrade to continue'}
                     </div>
+                    {!loading && savedGenerations.total > 0 && (
+                      <div className="kpi-sub" style={{ marginTop: 8, lineHeight: 1.5 }}>
+                        Saved on your account: {savedGenerations.resumes} resume
+                        {savedGenerations.resumes === 1 ? '' : 's'},{' '}
+                        {savedGenerations.coverLetters} cover letter
+                        {savedGenerations.coverLetters === 1 ? '' : 's'},{' '}
+                        {savedGenerations.thankYouEmails} thank-you
+                        {savedGenerations.thankYouEmails === 1 ? '' : 's'}
+                      </div>
+                    )}
                     {!loading && (
                       <button
                         type="button"
@@ -692,6 +920,14 @@ export default function DashboardPage() {
                     <span className="status-pill-count">{item.count}</span>
                   </button>
                 ))}
+              </div>
+              <div className="gen-legend">
+                <span className="gen-legend-item">
+                  <span className="gen-legend-dot saved" /> Green = saved (retrievable on any device)
+                </span>
+                <span className="gen-legend-item">
+                  <span className="gen-legend-dot" /> Gray = not generated yet
+                </span>
               </div>
             </div>
 
@@ -756,10 +992,76 @@ export default function DashboardPage() {
 
                         <td>
                           <div className="td-actions">
+                            {hasTailoredResume(app) ? (
+                              <button
+                                type="button"
+                                className="icon-btn generated"
+                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                onClick={() => openDocViewer(app, 'resume')}
+                                title="View saved tailored resume"
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <polyline points="14 2 14 8 20 8" />
+                                </svg>
+                                Tailored resume
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="icon-btn"
+                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                onClick={() => openTailorWizard(app, 'resume')}
+                                title="Generate a tailored resume for this application"
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <polyline points="14 2 14 8 20 8" />
+                                </svg>
+                                Tailored resume
+                              </button>
+                            )}
+
+                            {hasCoverLetter(app) ? (
+                              <button
+                                type="button"
+                                className="icon-btn generated"
+                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                onClick={() => openDocViewer(app, 'cover')}
+                                title="View saved cover letter"
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                  <path d="M4 4h16v16H4z" />
+                                  <path d="M8 8h8" />
+                                  <path d="M8 12h8" />
+                                  <path d="M8 16h5" />
+                                </svg>
+                                Cover letter
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="icon-btn"
+                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                onClick={() => openTailorWizard(app, 'cover')}
+                                title="Generate a cover letter for this application"
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                  <path d="M4 4h16v16H4z" />
+                                  <path d="M8 8h8" />
+                                  <path d="M8 12h8" />
+                                  <path d="M8 16h5" />
+                                </svg>
+                                Cover letter
+                              </button>
+                            )}
+
                             <button
-                              className="icon-btn thank"
+                              type="button"
+                              className={`icon-btn thank${hasThankYouEmail(app) ? ' generated' : ''}`}
                               style={{ flex: '1 1 auto', justifyContent: 'center' }}
                               onClick={() => openThankYou(app)}
+                              title={hasThankYouEmail(app) ? 'View saved thank-you email' : 'Generate thank-you email'}
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
                                 <path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z" />
@@ -769,8 +1071,10 @@ export default function DashboardPage() {
                             </button>
 
                             <button
+                              type="button"
                               className="icon-btn danger"
                               onClick={() => setDeleteId(deleteId === app.id ? null : app.id)}
+                              title="Delete application"
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
                                 <polyline points="3 6 5 6 21 6" />
@@ -779,7 +1083,6 @@ export default function DashboardPage() {
                                 <path d="M14 11v6" />
                                 <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
                               </svg>
-                              Delete
                             </button>
                           </div>
 
@@ -877,6 +1180,106 @@ export default function DashboardPage() {
                 disabled={saving || !form.company.trim() || !form.job_title.trim()}
               >
                 {saving ? <><div className="spin" />Saving...</> : editRow ? 'Save changes' : 'Add application'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tailorWizard.open && tailorWizard.app && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !tailorWizard.loading && closeTailorWizard()}>
+          <div className="modal" style={{ maxWidth: 520 }}>
+            <div className="modal-title">
+              {tailorWizardTitle(tailorWizard.type)} not generated yet
+            </div>
+
+            <div className="wizard-card">
+              <div className="wizard-lead">
+                {tailorWizard.step === 'needs_jd' ? (
+                  <>
+                    We don&apos;t have the job description saved for{' '}
+                    <span className="wizard-role">{tailorWizard.app.job_title}</span> at{' '}
+                    <span className="wizard-company">{tailorWizard.app.company}</span>.
+                    Paste the posting below, then generate your {tailorWizardLabel(tailorWizard.type)}.
+                  </>
+                ) : (
+                  <>
+                    A {tailorWizardLabel(tailorWizard.type)} has not been generated for{' '}
+                    <span className="wizard-role">{tailorWizard.app.job_title}</span> at{' '}
+                    <span className="wizard-company">{tailorWizard.app.company}</span> yet.
+                    Click below to create one now using your saved profile.
+                  </>
+                )}
+              </div>
+
+              {tailorWizard.step === 'needs_jd' && (
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="label">Job description</label>
+                  <textarea
+                    className="textarea-input"
+                    style={{ minHeight: 160 }}
+                    placeholder="Paste the full job posting here..."
+                    value={tailorWizard.jobDescription}
+                    onChange={(e) =>
+                      setTailorWizard((w) => ({ ...w, jobDescription: e.target.value, error: '' }))
+                    }
+                  />
+                </div>
+              )}
+            </div>
+
+            {!!tailorWizard.error && <div className="error-note">{tailorWizard.error}</div>}
+
+            {!profile && (
+              <div className="ai-note" style={{ marginBottom: 16 }}>
+                Complete your <a href="/profile" style={{ color: '#1d4ed8', fontWeight: 700 }}>profile</a> before generating documents.
+              </div>
+            )}
+
+            <div className="modal-actions" style={{ flexDirection: tailorWizard.step === 'prompt' ? 'column' : undefined, alignItems: 'stretch' }}>
+              <button
+                type="button"
+                className="btn-primary wizard-cta"
+                onClick={handleTailorGenerate}
+                disabled={tailorWizard.loading || !profile || (tailorWizard.step === 'needs_jd' && !tailorWizard.jobDescription.trim())}
+              >
+                {tailorWizard.loading ? (
+                  <>
+                    <div className="spin" />
+                    Generating {tailorWizardLabel(tailorWizard.type)}...
+                  </>
+                ) : (
+                  `Generate ${tailorWizardLabel(tailorWizard.type)} now`
+                )}
+              </button>
+              {!tailorWizard.loading && (
+                <button type="button" className="btn-cancel" onClick={closeTailorWizard} style={{ marginTop: tailorWizard.step === 'prompt' ? 10 : 0 }}>
+                  Cancel
+                </button>
+              )}
+            </div>
+
+            {tailorWizard.step === 'needs_jd' && !tailorWizard.loading && (
+              <div className="wizard-secondary">
+                Prefer to find the posting first?{' '}
+                <a href={searchUrlForApplication(tailorWizard.app)}>Open job search</a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {docViewer.open && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeDocViewer()}>
+          <div className="modal" style={{ maxWidth: 640 }}>
+            <div className="modal-title">{docViewer.title}</div>
+            <div className="doc-preview">{docViewer.content}</div>
+            <div className="modal-actions" style={{ marginTop: 16 }}>
+              <button type="button" className="btn-cancel" onClick={closeDocViewer}>
+                Close
+              </button>
+              <button type="button" className="btn-primary" onClick={handleCopyDoc}>
+                {docViewer.copied ? 'Copied!' : 'Copy to clipboard'}
               </button>
             </div>
           </div>

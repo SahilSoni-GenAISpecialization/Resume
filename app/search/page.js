@@ -26,7 +26,8 @@ function SearchPageContent() {
 
   const [profile, setProfile] = useState(null);
   const [userId, setUserId] = useState(null);
-  const { usage, refresh: refreshUsage, markPro } = useResumeUsage(supabase, userId);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const { usage, loading: usageLoading, refresh: refreshUsage, markPro } = useResumeUsage(supabase, userId);
   const {
     modalOpen: upgradeModalOpen,
     openModal: openUpgradeModal,
@@ -57,6 +58,9 @@ function SearchPageContent() {
   const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const [searchResults, setSearchResults] = useState([]);
+  const [searchPage, setSearchPage] = useState(1);
+  const [hasMoreJobs, setHasMoreJobs] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
 
@@ -94,10 +98,16 @@ function SearchPageContent() {
   }, [searchParams]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function load() {
+      setProfileLoading(true);
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
+
+      if (cancelled) return;
 
       if (!user) {
         window.location.href = '/';
@@ -106,11 +116,26 @@ function SearchPageContent() {
 
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single();
 
+      if (cancelled) return;
+
       setUserId(user.id);
       setProfile(p || null);
+      setProfileLoading(false);
     }
 
     load();
+
+    // Returning via browser back after Stripe (or other full-page redirect) can restore
+    // a frozen snapshot with profile/userId unset. Reload auth + profile in that case.
+    function handlePageShow(event) {
+      if (event.persisted) load();
+    }
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pageshow', handlePageShow);
+    };
   }, [supabase]);
 
   useEffect(() => {
@@ -269,12 +294,61 @@ function SearchPageContent() {
     return inserted?.id || null;
   }
 
+  async function fetchSearchJobs(page = 1, { append = false } = {}) {
+    const res = await fetch('/api/search-jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: searchQuery,
+        location: searchLocation,
+        company: searchCompany,
+        datePosted,
+        jobType,
+        remoteType,
+        experienceLevel,
+        sortBy,
+        page,
+      }),
+    });
+
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Search failed');
+
+    const jobs = json.jobs || [];
+    const hasMore = json.meta?.hasMore ?? jobs.length >= 10;
+
+    if (append) {
+      setSearchResults((prev) => {
+        const seen = new Set(prev.map((job) => job.jobId).filter(Boolean));
+        const merged = [...prev];
+
+        for (const job of jobs) {
+          if (job.jobId && seen.has(job.jobId)) continue;
+          if (job.jobId) seen.add(job.jobId);
+          merged.push(job);
+        }
+
+        return merged;
+      });
+    } else {
+      setSearchResults(jobs);
+    }
+
+    setSearchPage(page);
+    setHasMoreJobs(hasMore);
+
+    return json;
+  }
+
   async function handleSearchJobs() {
     if (!searchQuery.trim()) return;
 
     setIsSearching(true);
+    setIsLoadingMore(false);
     setSearchError('');
     setSearchResults([]);
+    setSearchPage(1);
+    setHasMoreJobs(false);
     setSelectedJob(null);
     setJobDetails(null);
     setJobDetailsError('');
@@ -283,29 +357,26 @@ function SearchPageContent() {
     closeDownloadMenu();
 
     try {
-      const res = await fetch('/api/search-jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: searchQuery,
-          location: searchLocation,
-          company: searchCompany,
-          datePosted,
-          jobType,
-          remoteType,
-          experienceLevel,
-          sortBy,
-        }),
-      });
-
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Search failed');
-
-      setSearchResults(json.jobs || []);
+      await fetchSearchJobs(1, { append: false });
     } catch (err) {
       setSearchError(err.message || 'Could not search jobs.');
     } finally {
       setIsSearching(false);
+    }
+  }
+
+  async function handleLoadMoreJobs() {
+    if (isLoadingMore || isSearching || !hasMoreJobs) return;
+
+    setIsLoadingMore(true);
+    setSearchError('');
+
+    try {
+      await fetchSearchJobs(searchPage + 1, { append: true });
+    } catch (err) {
+      setSearchError(err.message || 'Could not load more jobs.');
+    } finally {
+      setIsLoadingMore(false);
     }
   }
 
@@ -898,6 +969,18 @@ function SearchPageContent() {
           overflow-y: auto;
           padding-right: 4px;
         }
+        .load-more-wrap {
+          padding: 14px 16px 18px;
+          border-top: 1px solid rgba(15, 23, 42, 0.06);
+          background: rgba(15, 23, 42, 0.02);
+        }
+        .load-more-btn {
+          width: 100%;
+          justify-content: center;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
         .job-item {
           padding: 16px;
           border-radius: 14px;
@@ -1255,6 +1338,8 @@ function SearchPageContent() {
             <UsageNavPill
               supabase={supabase}
               userId={userId}
+              usage={usage}
+              usageLoading={usageLoading}
               className="usage-badge"
               limitHitClassName="limit-hit"
             />
@@ -1277,7 +1362,7 @@ function SearchPageContent() {
               Review the full job description first, then tailor your resume, generate a cover letter, or apply directly.
             </div>
 
-            {!profile && (
+            {!profileLoading && !profile && (
               <div className="profile-warn">
                 Your saved profile is missing. Go back to the landing page, log in, and complete your profile first.
               </div>
@@ -1566,7 +1651,10 @@ function SearchPageContent() {
                   <div className="results-header">
                     <div>
                       <div className="card-title" style={{ marginBottom: 2 }}>Search results</div>
-                      <div className="results-count">{searchResults.length} jobs found</div>
+                      <div className="results-count">
+                        Showing {searchResults.length} job{searchResults.length === 1 ? '' : 's'}
+                        {hasMoreJobs ? ' · more available' : ''}
+                      </div>
                     </div>
                   </div>
 
@@ -1587,6 +1675,26 @@ function SearchPageContent() {
                       </div>
                     ))}
                   </div>
+
+                  {(hasMoreJobs || isLoadingMore) && (
+                    <div className="load-more-wrap">
+                      <button
+                        type="button"
+                        className="btn-secondary load-more-btn"
+                        onClick={handleLoadMoreJobs}
+                        disabled={isLoadingMore || isSearching}
+                      >
+                        {isLoadingMore ? (
+                          <>
+                            <span className="spin" style={{ width: 14, height: 14 }} />
+                            Loading more jobs...
+                          </>
+                        ) : (
+                          'Show more jobs'
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="detail-pane">
