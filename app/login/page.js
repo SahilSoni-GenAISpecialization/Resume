@@ -50,7 +50,7 @@ export default function LoginPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (session && mode === 'login') {
-        router.push('/app');
+        router.push('/profile');
         router.refresh();
       }
     });
@@ -93,7 +93,7 @@ export default function LoginPage() {
       if (signInError) {
         setError(signInError.message);
       } else {
-        router.push('/app');
+        router.push('/profile');
         router.refresh();
       }
     } else {

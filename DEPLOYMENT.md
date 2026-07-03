@@ -210,7 +210,7 @@ Choose redirect HTTP → HTTPS when prompted.
 
 - [ ] https://applymatic.ca loads landing page
 - [ ] Sign up / login (email + Google/GitHub if enabled)
-- [ ] Save profile on `/app`
+- [ ] Save profile on `/profile`
 - [ ] Job search works
 - [ ] Stripe checkout (live) → Pro unlocks
 - [ ] Stripe webhook shows 200 in Stripe dashboard
