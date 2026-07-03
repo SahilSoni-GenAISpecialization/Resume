@@ -250,6 +250,7 @@ pm2 restart applymatic
 | Stripe checkout wrong domain | Set `NEXT_PUBLIC_SITE_URL=https://applymatic.ca` on server, rebuild |
 | Pro not unlocking | Run SQL migration; click “Sync status”; check `SUPABASE_SERVICE_ROLE_KEY` |
 | 502 Bad Gateway | Same as 503 — `pm2 logs applymatic` |
+| **"Internal error" when tailoring** | Visit `https://applymatic.ca/api/health` — if `aiConfigured` is `false`, add `ANTHROPIC_API_KEY` to production env and rebuild. If `true`, check `pm2 logs applymatic` while tailoring (timeout or WAF). |
 | **403 / "Forbidden" on tailor** | Request blocked before Next.js (Hostinger WAF) or free limit hit. Add `client_max_body_size 10M;` in nginx. Ensure `ANTHROPIC_API_KEY` is set. Check `pm2 logs applymatic` while tailoring. |
 | Build runs out of memory | Add swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClaudeJson, createClaudeText, getUserFacingAiError } from '@/lib/anthropic';
+import { createClaudeJson, createClaudeText, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { sanitizeJobDescription } from '@/lib/api-response';
@@ -10,6 +10,11 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request) {
   try {
+    if (!isAiConfigured()) {
+      console.error('TAILOR ERROR: ANTHROPIC_API_KEY is not set on the server');
+      return NextResponse.json({ error: getUserFacingAiError() }, { status: 503 });
+    }
+
     const contentType = request.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
       return NextResponse.json(
@@ -87,8 +92,6 @@ export async function POST(request) {
       address: profile.address || profile.location || '',
       linkedin: profile.linkedin || '',
       portfolio: profile.portfolio || profile.website || '',
-      target_role: profile.target_role || profile.targetRole || '',
-      preferred_location: profile.preferred_location || profile.preferredLocation || '',
       summary: profile.summary || '',
       experience: profile.experience || '',
       education: profile.education || '',
@@ -97,6 +100,18 @@ export async function POST(request) {
       projects: profile.projects || '',
       additional_info: profile.additional_info || profile.additionalInfo || '',
     });
+
+    const profileForAi = {
+      name: normalizedProfile.full_name || `${normalizedProfile.first_name || ''} ${normalizedProfile.last_name || ''}`.trim(),
+      email: normalizedProfile.email || '',
+      phone: normalizedProfile.phone || '',
+      summary: normalizedProfile.summary || '',
+      experience: String(normalizedProfile.experience || '').slice(0, 6000),
+      education: String(normalizedProfile.education || '').slice(0, 2000),
+      skills: String(normalizedProfile.skills || '').slice(0, 1500),
+      projects: String(normalizedProfile.projects || '').slice(0, 2000),
+      certifications: String(normalizedProfile.certifications || '').slice(0, 1500),
+    };
 
     const candidateName =
       normalizedProfile.full_name ||
@@ -114,68 +129,22 @@ export async function POST(request) {
       let tailoredStructured;
       try {
         tailoredStructured = await createClaudeJson({
-          system: `You are an expert ATS resume writer.
-
-Return ONLY valid JSON in this exact shape:
-{
-  "name": "",
-  "contact": {
-    "email": "",
-    "phone": "",
-    "address": "",
-    "linkedin": "",
-    "portfolio": ""
-  },
-  "summary": "",
-  "skills": [],
-  "experience": [{ "title": "", "company": "", "years": "", "bullets": [] }],
-  "education": [{ "degree": "", "institution": "", "year": "" }],
-  "certifications": [],
-  "projects": [{ "name": "", "years": "", "details": [] }],
-  "match_score": 0,
-  "match_reasons": [],
-  "match_improvement_tips": []
-}
+          system: `You are an expert ATS resume writer. Return ONLY valid JSON in this shape:
+{"name":"","contact":{"email":"","phone":"","address":"","linkedin":"","portfolio":""},"summary":"","skills":[],"experience":[{"title":"","company":"","years":"","bullets":[]}],"education":[{"degree":"","institution":"","year":""}],"certifications":[],"projects":[{"name":"","years":"","details":[]}],"match_score":0,"match_reasons":[],"match_improvement_tips":[]}
 
 Rules:
-- Use ONLY the candidate's real background from the base profile.
-- Do NOT invent employers, degrees, certifications, dates, or projects.
-- Rewrite the summary, skills ordering, and experience bullets to align strongly to the job.
-- Prioritize ATS keyword alignment naturally.
-- EXPERIENCE BULLET RULES:
-  - Current/most recent role: minimum 7 bullet points
-  - Previous role (one before current): minimum 5-6 bullet points
-  - Any older roles: minimum 4-5 bullet points
-  - Every bullet must be strong, specific, and achievement/action oriented
-  - Never write fewer bullets than the minimum for each role
-  - Never pad with weak or generic bullets — every line must add value
-  - Every experience bullet must be strong, specific, and achievement/action oriented.
-- Include contact details from the candidate profile in the contact object.
-- skills must be concise, relevant, and job-targeted.
-- match_score must be realistic, not inflated, and based on actual alignment.
-- "years" must always contain the date range string, e.g. "Oct 2025 - Present"
-- Never leave "years" blank if dates are mentioned
-- Never include dates inside the "title" field
-- match_reasons must be short specific reasons for score strength or gaps (e.g. missing required skills, licenses, or years of experience).
-- match_improvement_tips must contain 3-5 concrete, realistic, actionable steps the candidate could take to raise their match score toward 85%+ for THIS specific job — e.g. specific certifications/licenses to pursue, specific skills to build or highlight more prominently, specific keywords from the job description to naturally incorporate, or types of experience to gain or emphasize.
-- Each match_improvement_tip must be specific to this job and this candidate's actual gaps — never generic advice like "improve your resume".
-- Never suggest fabricating experience, skills, or credentials the candidate doesn't have — only suggest legitimate ways to close real gaps or better surface existing strengths.
-- Optimize as much as possible for ATS match, but never fabricate qualifications.`,
-          user: `BASE PROFILE JSON:
-${JSON.stringify(normalizedProfile)}
+- Use ONLY the candidate's real background. Never invent employers, degrees, or dates.
+- Align summary, skills, and bullets to the job with natural ATS keywords.
+- Recent role: 5-7 bullets; prior roles: 4-5 bullets each. Action-oriented bullets only.
+- Include contact from profile. Realistic match_score. match_reasons and match_improvement_tips must be specific.`,
+          user: `PROFILE:
+${JSON.stringify(profileForAi)}
 
-JOB TITLE:
-${jobTitle || 'Not specified'}
+JOB: ${jobTitle || 'Not specified'} at ${company || 'Not specified'}
 
-COMPANY:
-${company || 'Not specified'}
-
-APPLY URL:
-${applyUrl || 'Not specified'}
-
-JOB DESCRIPTION:
-${cleanedJobDescription.slice(0, 12000)}`,
-          maxTokens: 8192,
+DESCRIPTION:
+${cleanedJobDescription.slice(0, 8000)}`,
+          maxTokens: 4096,
         });
       } catch (err) {
         console.error('Tailor resume AI error:', err);
@@ -207,7 +176,8 @@ ${cleanedJobDescription.slice(0, 12000)}`,
     }
 
     if (normalizedMode === 'cover_letter') {
-      coverLetter = await createClaudeText({
+      try {
+        coverLetter = await createClaudeText({
         system: `You are a professional cover letter writer.
 
 Write a tailored cover letter.
@@ -245,7 +215,11 @@ ${normalizedProfile.education}
 Job description:
 ${cleanedJobDescription.slice(0, 8000)}`,
         maxTokens: 2048,
-      });
+        });
+      } catch (err) {
+        console.error('Tailor cover letter AI error:', err);
+        return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
+      }
     }
 
     const insertPayload = {

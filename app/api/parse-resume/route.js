@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClaudeJson, getUserFacingAiError } from '@/lib/anthropic';
+import { createClaudeJson, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
 
 const SYSTEM_PROMPT = `Extract resume data and return ONLY valid JSON with these exact keys:
 {
@@ -48,6 +48,11 @@ function normalizeExtractedText(text) {
 
 export async function POST(request) {
   try {
+    if (!isAiConfigured()) {
+      console.error('PARSE RESUME ERROR: ANTHROPIC_API_KEY is not set on the server');
+      return NextResponse.json({ error: getUserFacingAiError() }, { status: 503 });
+    }
+
     const formData = await request.formData();
     const file = formData.get('file');
 

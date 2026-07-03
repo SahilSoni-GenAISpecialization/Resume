@@ -1,11 +1,16 @@
 import { NextResponse } from 'next/server';
-import { createClaudeJson, getUserFacingAiError } from '@/lib/anthropic';
+import { createClaudeJson, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
 
 export async function POST(request) {
   try {
+    if (!isAiConfigured()) {
+      console.error('THANK YOU EMAIL ERROR: ANTHROPIC_API_KEY is not set on the server');
+      return NextResponse.json({ error: getUserFacingAiError() }, { status: 503 });
+    }
+
     const contentType = request.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
       return NextResponse.json(
