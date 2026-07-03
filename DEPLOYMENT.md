@@ -79,9 +79,15 @@ In [Stripe Dashboard](https://dashboard.stripe.com):
 
 ---
 
-### 6. OpenAI
+### 6. Anthropic (Claude)
 
-Ensure your API key has billing enabled and sufficient quota for production traffic.
+Get an API key from [console.anthropic.com](https://console.anthropic.com). Applymatic uses **Claude Sonnet 5** (`claude-sonnet-5`) for resume parsing, tailoring, cover letters, and thank-you emails.
+
+Set on your VPS:
+- `ANTHROPIC_API_KEY=sk-ant-...`
+- Optional: `ANTHROPIC_MODEL=claude-sonnet-5` (this is the default)
+
+Ensure billing is enabled and you have sufficient quota for production traffic.
 
 ---
 
@@ -138,7 +144,8 @@ NEXT_PUBLIC_SITE_URL=https://applymatic.ca
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
-OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-5
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_PRICE_ID=price_...
 STRIPE_WEBHOOK_SECRET=whsec_...

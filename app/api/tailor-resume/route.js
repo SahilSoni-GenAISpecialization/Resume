@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { createClaudeJson, createClaudeText } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 export async function POST(request) {
   try {
@@ -104,13 +100,10 @@ export async function POST(request) {
     let tailoredStructured = null;
 
     if (normalizedMode === 'resume') {
-      const resumeCompletion = await openai.chat.completions.create({
-        model: 'gpt-5-nano',
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert ATS resume writer.
+      let tailoredStructured;
+      try {
+        tailoredStructured = await createClaudeJson({
+          system: `You are an expert ATS resume writer.
 
 Return ONLY valid JSON in this exact shape:
 {
@@ -157,10 +150,7 @@ Rules:
 - Each match_improvement_tip must be specific to this job and this candidate's actual gaps — never generic advice like "improve your resume".
 - Never suggest fabricating experience, skills, or credentials the candidate doesn't have — only suggest legitimate ways to close real gaps or better surface existing strengths.
 - Optimize as much as possible for ATS match, but never fabricate qualifications.`,
-          },
-          {
-            role: 'user',
-            content: `BASE PROFILE JSON:
+          user: `BASE PROFILE JSON:
 ${JSON.stringify(normalizedProfile)}
 
 JOB TITLE:
@@ -174,14 +164,8 @@ ${applyUrl || 'Not specified'}
 
 JOB DESCRIPTION:
 ${jobDescription.slice(0, 12000)}`,
-          },
-        ],
-      });
-
-      const rawResume = resumeCompletion.choices?.[0]?.message?.content || '{}';
-
-      try {
-        tailoredStructured = JSON.parse(rawResume);
+          maxTokens: 8192,
+        });
       } catch {
         return NextResponse.json(
           { error: 'Model returned invalid resume JSON.' },
@@ -214,12 +198,8 @@ ${jobDescription.slice(0, 12000)}`,
     }
 
     if (normalizedMode === 'cover_letter') {
-      const coverCompletion = await openai.chat.completions.create({
-        model: 'gpt-5-nano',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a professional cover letter writer.
+      coverLetter = await createClaudeText({
+        system: `You are a professional cover letter writer.
 
 Write a tailored cover letter.
 
@@ -234,10 +214,7 @@ Rules:
 Sincerely,
 ${candidateName}
 - Maximum 400-500 words`,
-          },
-          {
-            role: 'user',
-            content: `Candidate name: ${candidateName}
+        user: `Candidate name: ${candidateName}
 Target role: ${jobTitle || 'this role'}
 Company: ${company || 'this company'}
 
@@ -258,11 +235,8 @@ ${normalizedProfile.education}
 
 Job description:
 ${jobDescription.slice(0, 8000)}`,
-          },
-        ],
+        maxTokens: 2048,
       });
-
-      coverLetter = coverCompletion.choices?.[0]?.message?.content?.trim() || '';
     }
 
     const insertPayload = {

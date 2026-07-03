@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { createClaudeJson } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 export async function POST(request) {
   try {
@@ -68,13 +64,10 @@ export async function POST(request) {
 
     const details = String(interviewDetails || '').trim();
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-5-nano',
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: `You are an expert career coach writing a highly professional, warm, and specific post-interview thank-you email on behalf of a job candidate.
+    let parsed;
+    try {
+      parsed = await createClaudeJson({
+        system: `You are an expert career coach writing a highly professional, warm, and specific post-interview thank-you email on behalf of a job candidate.
 
 Return ONLY valid JSON in this exact shape:
 {
@@ -94,10 +87,7 @@ Rules:
 - Do not include a "To:" line, date, or address block — this is only the email body text.
 - Do not use placeholders like [Company Name] — always use the real company and role name provided.
 - Never fabricate employers, dates, or achievements beyond what is in the candidate's background.`,
-        },
-        {
-          role: 'user',
-          content: `Candidate name: ${candidateName}
+        user: `Candidate name: ${candidateName}
 Job title: ${jobTitle}
 Company: ${company}
 
@@ -109,15 +99,8 @@ ${normalizedProfile.skills || 'Not provided'}
 
 Interview details provided by candidate (may be empty):
 ${details || 'None provided — write a professional, slightly general thank-you note without inventing specifics.'}`,
-        },
-      ],
-    });
-
-    const raw = completion.choices?.[0]?.message?.content?.trim() || '{}';
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
+        maxTokens: 2048,
+      });
     } catch {
       return NextResponse.json({ error: 'AI returned invalid JSON.' }, { status: 500 });
     }

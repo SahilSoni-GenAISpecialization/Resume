@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { createClaudeJson } from '@/lib/anthropic';
 
 const SYSTEM_PROMPT = `Extract resume data and return ONLY valid JSON with these exact keys:
 {
@@ -95,33 +93,16 @@ export async function POST(request) {
       );
     }
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-5-nano',
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Resume text:\n\n${extractedText.slice(0, 15000)}`,
-        },
-      ],
-    });
-
-    const raw = completion.choices?.[0]?.message?.content?.trim() || '';
-
-    if (!raw) {
-      return NextResponse.json(
-        { error: 'AI returned an empty response.' },
-        { status: 500 }
-      );
-    }
-
     let parsed;
     try {
-      parsed = JSON.parse(raw);
-    } catch {
+      parsed = await createClaudeJson({
+        system: SYSTEM_PROMPT,
+        user: `Resume text:\n\n${extractedText.slice(0, 15000)}`,
+        maxTokens: 8192,
+      });
+    } catch (err) {
       return NextResponse.json(
-        { error: 'AI returned invalid JSON.', raw },
+        { error: err.message || 'AI returned invalid JSON.' },
         { status: 500 }
       );
     }
