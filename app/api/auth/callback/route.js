@@ -1,10 +1,12 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { getSiteUrl } from '@/lib/site-url';
 
 export async function GET(request) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
+  const siteUrl = getSiteUrl(request);
 
   if (code) {
     const cookieStore = await cookies();
@@ -22,8 +24,8 @@ export async function GET(request) {
       }
     );
     await supabase.auth.exchangeCodeForSession(code);
-    return NextResponse.redirect(`${origin}/app`);
+    return NextResponse.redirect(`${siteUrl}/app`);
   }
 
-  return NextResponse.redirect(`${origin}/`);
+  return NextResponse.redirect(`${siteUrl}/`);
 }

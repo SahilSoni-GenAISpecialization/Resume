@@ -1,8 +1,10 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
+import { getSiteUrl } from '@/lib/site-url';
 
 export async function middleware(request) {
   let supabaseResponse = NextResponse.next({ request });
+  const siteUrl = getSiteUrl(request);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -25,12 +27,12 @@ export async function middleware(request) {
 
   // Protect only /app routes
   if (!user && pathname.startsWith('/app')) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    return NextResponse.redirect(new URL('/login', siteUrl));
   }
 
   // Redirect logged-in users away from login
   if (user && pathname === '/login') {
-    return NextResponse.redirect(new URL('/app', request.url));
+    return NextResponse.redirect(new URL('/app', siteUrl));
   }
 
   return supabaseResponse;

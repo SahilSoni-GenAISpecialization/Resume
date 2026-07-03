@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
+import { getClientSiteUrl } from '@/lib/site-url';
 import '@/app/login.css';
 
 const TRUST = [
@@ -64,7 +65,7 @@ export default function LoginPage() {
 
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${window.location.origin}/api/auth/callback` },
+      options: { redirectTo: `${getClientSiteUrl()}/api/auth/callback` },
     });
 
     if (oauthError) {
@@ -99,7 +100,7 @@ export default function LoginPage() {
       const { error: signUpError } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: `${window.location.origin}/api/auth/callback` },
+        options: { emailRedirectTo: `${getClientSiteUrl()}/api/auth/callback` },
       });
 
       if (signUpError) {
