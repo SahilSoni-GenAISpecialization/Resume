@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClaudeJson } from '@/lib/anthropic';
+import { createClaudeJson, getUserFacingAiError } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
@@ -101,8 +101,9 @@ Interview details provided by candidate (may be empty):
 ${details || 'None provided — write a professional, slightly general thank-you note without inventing specifics.'}`,
         maxTokens: 2048,
       });
-    } catch {
-      return NextResponse.json({ error: 'AI returned invalid JSON.' }, { status: 500 });
+    } catch (err) {
+      console.error('Thank-you email AI error:', err);
+      return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
     }
 
     const { error: usageError } = await supabase.from('user_usage').upsert(
@@ -128,9 +129,6 @@ ${details || 'None provided — write a professional, slightly general thank-you
     });
   } catch (err) {
     console.error('THANK YOU EMAIL ERROR:', err);
-    return NextResponse.json(
-      { error: err.message || 'Failed to generate thank-you email' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
   }
 }

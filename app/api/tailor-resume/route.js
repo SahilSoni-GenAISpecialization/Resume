@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClaudeJson, createClaudeText } from '@/lib/anthropic';
+import { createClaudeJson, createClaudeText, getUserFacingAiError } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
@@ -166,11 +166,9 @@ JOB DESCRIPTION:
 ${jobDescription.slice(0, 12000)}`,
           maxTokens: 8192,
         });
-      } catch {
-        return NextResponse.json(
-          { error: 'Model returned invalid resume JSON.' },
-          { status: 500 }
-        );
+      } catch (err) {
+        console.error('Tailor resume AI error:', err);
+        return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
       }
 
       tailoredStructured.name = tailoredStructured.name || candidateName;
@@ -291,10 +289,7 @@ ${jobDescription.slice(0, 8000)}`,
 });
   } catch (err) {
     console.error('TAILOR ERROR:', err);
-    return NextResponse.json(
-      { error: err.message || 'Failed to tailor resume' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
   }
 }
 

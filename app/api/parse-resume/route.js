@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClaudeJson } from '@/lib/anthropic';
+import { createClaudeJson, getUserFacingAiError } from '@/lib/anthropic';
 
 const SYSTEM_PROMPT = `Extract resume data and return ONLY valid JSON with these exact keys:
 {
@@ -101,10 +101,8 @@ export async function POST(request) {
         maxTokens: 8192,
       });
     } catch (err) {
-      return NextResponse.json(
-        { error: err.message || 'AI returned invalid JSON.' },
-        { status: 500 }
-      );
+      console.error('Parse resume AI error:', err);
+      return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
     }
 
     const safe = {
@@ -126,9 +124,6 @@ export async function POST(request) {
     return NextResponse.json({ success: true, data: safe });
   } catch (err) {
     console.error('Parse resume error:', err);
-    return NextResponse.json(
-      { error: err.message || 'Failed to parse resume' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
   }
 }
