@@ -41,7 +41,7 @@ export async function POST(request) {
     if (!isPro && count >= FREE_RESUME_LIMIT) {
       return NextResponse.json(
         { error: 'FREE_LIMIT_REACHED', count },
-        { status: 403 }
+        { status: 429 }
       );
     }
 

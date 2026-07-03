@@ -317,6 +317,30 @@ export function flattenProfileForAi(profile: Record<string, unknown>) {
   };
 }
 
+/** Smaller payload for tailor API — avoids sending full DB row / duplicate JSON blobs. */
+export function profileForTailorRequest(profile: Record<string, unknown>) {
+  const flat = flattenProfileForAi(profile) as Record<string, unknown>;
+  return {
+    first_name: flat.first_name || flat.firstName || '',
+    last_name: flat.last_name || flat.lastName || '',
+    full_name: flat.full_name || flat.fullName || '',
+    email: flat.email || '',
+    phone: flat.phone || '',
+    address: flat.address || flat.location || '',
+    linkedin: flat.linkedin || '',
+    portfolio: flat.portfolio || flat.website || '',
+    target_role: flat.target_role || flat.targetRole || '',
+    preferred_location: flat.preferred_location || flat.preferredLocation || '',
+    summary: flat.summary || '',
+    experience: flat.experience || '',
+    education: flat.education || '',
+    certifications: flat.certifications || '',
+    skills: flat.skills || '',
+    projects: flat.projects || '',
+    additional_info: flat.additional_info || flat.additionalInfo || '',
+  };
+}
+
 export function isProfileComplete(profile: StructuredProfile) {
   const { personal, experience, education, skills } = profile;
   const hasPersonal =

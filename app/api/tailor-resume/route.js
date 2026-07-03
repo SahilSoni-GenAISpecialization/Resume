@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClaudeJson, createClaudeText, getUserFacingAiError } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { flattenProfileForAi } from '@/lib/profile-data';
+import { sanitizeJobDescription } from '@/lib/api-response';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
 
 export const maxDuration = 120;
@@ -49,7 +50,7 @@ export async function POST(request) {
             'You have used all 5 free resume/cover letter generations this month. Upgrade to Pro for CAD $9.99/month to continue.',
           count,
         },
-        { status: 403 }
+        { status: 429 }
       );
     }
 
@@ -68,6 +69,8 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+
+    const cleanedJobDescription = sanitizeJobDescription(jobDescription);
 
     const normalizedProfile = flattenProfileForAi({
       first_name: profile.first_name || profile.firstName || profile.full_name?.split(' ')?.[0] || '',
@@ -171,7 +174,7 @@ APPLY URL:
 ${applyUrl || 'Not specified'}
 
 JOB DESCRIPTION:
-${jobDescription.slice(0, 12000)}`,
+${cleanedJobDescription.slice(0, 12000)}`,
           maxTokens: 8192,
         });
       } catch (err) {
@@ -240,7 +243,7 @@ Candidate education:
 ${normalizedProfile.education}
 
 Job description:
-${jobDescription.slice(0, 8000)}`,
+${cleanedJobDescription.slice(0, 8000)}`,
         maxTokens: 2048,
       });
     }
@@ -253,7 +256,7 @@ ${jobDescription.slice(0, 8000)}`,
       status: normalizedMode === 'resume' ? 'resume_generated' : 'cover_letter_generated',
       job_title: jobTitle || null,
       company: company || null,
-      job_description: jobDescription,
+      job_description: cleanedJobDescription,
     };
 
     const { error: applicationError } = await supabase

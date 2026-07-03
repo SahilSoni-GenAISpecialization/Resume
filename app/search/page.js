@@ -6,8 +6,9 @@ import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import { CONTACT_EMAIL } from '@/lib/site-config';
-import { getApiErrorMessage, readApiJson } from '@/lib/api-response';
-import { flattenProfileForAi } from '@/lib/profile-data';
+import { getApiErrorMessage, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
+import { profileForTailorRequest } from '@/lib/profile-data';
+import { fetchMonthlyResumeUsage, FREE_RESUME_LIMIT } from '@/lib/usage';
 
 export default function SearchPage() {
   return (
@@ -25,7 +26,7 @@ function SearchPageContent() {
 
   const [profile, setProfile] = useState(null);
   const [userId, setUserId] = useState(null);
-  const { usage, refresh: refreshUsage, bump: bumpUsage, markPro } = useResumeUsage(supabase, userId);
+  const { usage, refresh: refreshUsage, markPro } = useResumeUsage(supabase, userId);
   const {
     modalOpen: upgradeModalOpen,
     openModal: openUpgradeModal,
@@ -339,10 +340,16 @@ function SearchPageContent() {
   }
 
   async function handleTailor(source = 'selected', mode = 'resume') {
-    if (hasReachedFreeLimit) {
-      setTailorError(
-        'You have used all 5 free resume/cover letter generations this month. Upgrade to Pro for CAD $9.99/month to continue.'
-      );
+    if (!userId) {
+      setTailorError('Please log in again and retry.');
+      return;
+    }
+
+    const freshUsage = await fetchMonthlyResumeUsage(supabase, userId);
+    await refreshUsage();
+
+    if (!freshUsage.isPro && freshUsage.used >= FREE_RESUME_LIMIT) {
+      setTailorError(FREE_LIMIT_MESSAGE);
       return;
     }
 
@@ -352,7 +359,6 @@ function SearchPageContent() {
     setTailorSource(source);
     setCopied(false);
     closeDownloadMenu();
-    bumpUsage();
 
     try {
       let jd = '';
@@ -409,17 +415,20 @@ function SearchPageContent() {
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          profile: flattenProfileForAi(profile),
-          jobDescription: jd,
-          jobTitle: title,
-          company: comp,
-          applyUrl: finalApplyUrl,
+          profile: profileForTailorRequest(profile),
+          jobDescription: sanitizeJobDescription(jd),
+          jobTitle: title.slice(0, 300),
+          company: comp.slice(0, 200),
+          applyUrl: finalApplyUrl.slice(0, 500),
           mode,
         }),
       });
 
       const { json, text } = await readApiJson(res);
       if (!res.ok) {
+        if (json?.error === 'FREE_LIMIT_REACHED') {
+          await refreshUsage();
+        }
         throw new Error(getApiErrorMessage(res, json, text));
       }
 
