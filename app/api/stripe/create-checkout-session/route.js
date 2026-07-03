@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getProPriceId, getSiteUrl, getStripe } from '@/lib/stripe';
+import { resolveStripeCustomerId } from '@/lib/stripe-profile';
 
 export async function POST(request) {
   try {
@@ -31,12 +32,18 @@ export async function POST(request) {
       }
     } catch {}
 
+    const customerId = await resolveStripeCustomerId(
+      stripe,
+      user.id,
+      profile?.stripe_customer_id || null
+    );
+
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: getProPriceId(), quantity: 1 }],
       client_reference_id: user.id,
-      customer: profile?.stripe_customer_id || undefined,
-      customer_email: profile?.stripe_customer_id ? undefined : user.email,
+      customer: customerId || undefined,
+      customer_email: customerId ? undefined : user.email,
       success_url: `${siteUrl}${returnPath}?upgrade=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${siteUrl}${returnPath}?upgrade=cancelled`,
       allow_promotion_codes: true,

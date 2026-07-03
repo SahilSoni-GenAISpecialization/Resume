@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe';
-import { applySubscriptionToProfile, readSubscriptionFromProfile } from '@/lib/stripe-profile';
+import {
+  applySubscriptionToProfile,
+  readSubscriptionFromProfile,
+  resolveStripeCustomerId,
+} from '@/lib/stripe-profile';
 
 /**
  * Recovery path for when a Stripe payment succeeded but the local `profiles` row couldn't be
@@ -28,7 +32,11 @@ export async function POST() {
       .eq('id', user.id)
       .maybeSingle();
 
-    let customerId = profile?.stripe_customer_id || null;
+    let customerId = await resolveStripeCustomerId(
+      stripe,
+      user.id,
+      profile?.stripe_customer_id || null
+    );
 
     if (!customerId && user.email) {
       const customers = await stripe.customers.list({ email: user.email, limit: 1 });
