@@ -12,6 +12,14 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: '/login',
+        headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
+      },
+      {
+        source: '/profile',
+        headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
+      },
+      {
         source: '/profile/:path*',
         headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
       },

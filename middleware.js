@@ -46,8 +46,9 @@ export async function middleware(request) {
     return NextResponse.redirect(new URL('/profile', siteUrl));
   }
 
-  if (isPrivate) {
+  if (isPrivate || pathname === '/login') {
     supabaseResponse.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+    supabaseResponse.headers.set('Pragma', 'no-cache');
   }
 
   return supabaseResponse;

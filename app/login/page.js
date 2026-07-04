@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import { getClientSiteUrl } from '@/lib/site-url';
@@ -43,20 +42,23 @@ export default function LoginPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const supabase = createClient();
-  const router = useRouter();
+
+  function goToProfileAfterAuth() {
+    // Full page load avoids Hostinger CDN returning raw RSC flight data on router.push().
+    window.location.assign('/profile');
+  }
 
   useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session && mode === 'login') {
-        router.push('/profile');
-        router.refresh();
+      if (session && mode === 'login' && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
+        goToProfileAfterAuth();
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [supabase, router, mode]);
+  }, [supabase, mode]);
 
   const handleOAuth = async (provider) => {
     setError('');
@@ -92,9 +94,9 @@ export default function LoginPage() {
 
       if (signInError) {
         setError(signInError.message);
+        setLoading(false);
       } else {
-        router.push('/profile');
-        router.refresh();
+        goToProfileAfterAuth();
       }
     } else {
       const { error: signUpError } = await supabase.auth.signUp({
@@ -105,12 +107,12 @@ export default function LoginPage() {
 
       if (signUpError) {
         setError(signUpError.message);
+        setLoading(false);
       } else {
         setMessage('Check your email to confirm your account.');
+        setLoading(false);
       }
     }
-
-    setLoading(false);
   };
 
   return (
