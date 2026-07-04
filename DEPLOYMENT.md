@@ -42,6 +42,50 @@ Enable and configure (if not done):
 
 ---
 
+### 3b. OAuth branding — show “Applymatic” instead of `*.supabase.co`
+
+Google and GitHub sign-in go **through Supabase’s auth server**, so the provider screen may say “continue to `cyeyiztiyigrmgohedyx.supabase.co`”. That is normal with the default Supabase URL. Fix it in the **provider dashboards** (not in Next.js code).
+
+#### Google (recommended — free)
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) → project linked to your Supabase Google provider.
+2. **APIs & Services → OAuth consent screen**
+   - **App name:** `Applymatic`
+   - **User support email:** your email
+   - **App logo:** upload Applymatic logo (120×120)
+   - **Application home page:** `https://applymatic.ca`
+   - **Authorized domains:** add `applymatic.ca` (verify ownership in [Google Search Console](https://search.google.com/search-console) first)
+   - Also keep `supabase.co` authorized — required for the Supabase callback URL
+3. **Publish app** (move out of “Testing”) after domain verification. Until Google verifies your brand, many users only see the domain line, not your app name/logo.
+4. **APIs & Services → Credentials** → your OAuth client:
+   - Redirect URI must stay: `https://cyeyiztiyigrmgohedyx.supabase.co/auth/v1/callback`
+   - Paste the same Client ID + Secret into Supabase → Authentication → Google.
+
+After verification, Google shows **Applymatic** with your logo. The “continue to …” line may still show `supabase.co` until you add a Supabase custom auth domain (below).
+
+#### GitHub
+
+1. [GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers) → your Applymatic app (or create one).
+2. Set **Application name** to `Applymatic`.
+3. **Homepage URL:** `https://applymatic.ca`
+4. **Authorization callback URL:** `https://cyeyiztiyigrmgohedyx.supabase.co/auth/v1/callback`
+5. Copy Client ID + Secret into Supabase → Authentication → GitHub.
+
+GitHub’s authorize screen uses the **Application name** you set here (“Applymatic”), not the Supabase project ref.
+
+#### Optional — custom auth domain (best “continue to applymatic.ca” on Google)
+
+Supabase **Custom Domains** (paid add-on) lets auth run on e.g. `auth.applymatic.ca` instead of `*.supabase.co`. Then Google shows “continue to auth.applymatic.ca”.
+
+1. Supabase Dashboard → **Project Settings → Custom Domains** → add `auth.applymatic.ca`.
+2. Add the DNS records Supabase gives you at Hostinger.
+3. Update Google + GitHub callback URLs to `https://auth.applymatic.ca/auth/v1/callback`.
+4. Rebuild/redeploy after any env changes.
+
+This cannot be changed from application code alone — it requires Supabase + Google/GitHub configuration.
+
+---
+
 ### 4. Supabase — SQL (run once if not done)
 
 In **SQL Editor**:
@@ -272,6 +316,8 @@ pm2 restart applymatic
 |-------|-----|
 | **503 Service Unavailable** | App is not running. SSH in and run the steps below. |
 | OAuth redirect error | Add production callback URLs in Supabase |
+| Google shows `*.supabase.co` on sign-in | Configure OAuth consent screen app name “Applymatic”, verify `applymatic.ca`, publish app — see **§3b OAuth branding** |
+| GitHub shows wrong app name | Set GitHub OAuth app **Application name** to `Applymatic` — see **§3b** |
 | Stripe checkout wrong domain | Set `NEXT_PUBLIC_SITE_URL=https://applymatic.ca` on server, rebuild |
 | Pro not unlocking | Run SQL migration; click “Sync status”; check `SUPABASE_SERVICE_ROLE_KEY` |
 | 502 Bad Gateway | Same as 503 — `pm2 logs applymatic` |

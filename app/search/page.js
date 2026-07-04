@@ -5,7 +5,10 @@ import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
+import AppSupportNav from '@/components/app/AppSupportNav';
+import AppFooter from '@/components/app/AppFooter';
 import { CONTACT_EMAIL } from '@/lib/site-config';
+import '@/app/app.css';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
 import { fetchMonthlyResumeUsage, FREE_RESUME_LIMIT } from '@/lib/usage';
 
@@ -716,6 +719,8 @@ function SearchPageContent() {
         body { background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         .shell {
           min-height: 100vh;
+          display: flex;
+          flex-direction: column;
           background:
             radial-gradient(circle at top left, rgba(37,99,235,0.07), transparent 30%),
             radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%),
@@ -1349,6 +1354,7 @@ function SearchPageContent() {
                 ✨ Upgrade to Pro
               </button>
             )}
+            <AppSupportNav variant="shell" />
             <a href="/dashboard" className="btn-ghost">Dashboard</a>
   <button type="button" className="btn-ghost" onClick={handleLogout}>
     Logout
@@ -1995,6 +2001,8 @@ function SearchPageContent() {
             )}
           </section>
         </main>
+
+        <AppFooter />
       </div>
 
       {isTailoring && (

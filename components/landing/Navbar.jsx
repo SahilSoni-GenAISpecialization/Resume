@@ -70,6 +70,9 @@ export default function Navbar({ scrollTo }) {
           <a href="/contact" className="lp-nav-link" style={{ textDecoration: 'none' }}>
             Contact
           </a>
+          <a href="/careers" className="lp-nav-link" style={{ textDecoration: 'none' }}>
+            Careers
+          </a>
         </div>
 
         <div className="lp-nav-actions">
@@ -134,6 +137,14 @@ export default function Navbar({ scrollTo }) {
                   onClick={() => setMenuOpen(false)}
                 >
                   Contact
+                </a>
+                <a
+                  href="/careers"
+                  className="lp-mobile-menu-link"
+                  style={{ textDecoration: 'none' }}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Careers
                 </a>
               </div>
 

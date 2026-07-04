@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
 import { CONTACT_EMAIL } from '@/lib/site-config';
+import { buildMailtoHref } from '@/lib/mailto';
 import '@/app/login.css';
 
 export default function ContactPage() {
@@ -14,24 +15,19 @@ export default function ContactPage() {
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
 
-  function buildMailtoHref() {
-    const finalSubject = subject.trim() || 'Applymatic support request';
-    const bodyLines = [
-      message.trim() || '(no message provided)',
-      '',
-      '---',
-      `From: ${name.trim() || 'Not provided'}`,
-      `Reply-to email: ${email.trim() || 'Not provided'}`,
-    ];
-
-    return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(finalSubject)}&body=${encodeURIComponent(
-      bodyLines.join('\n')
-    )}`;
+  function buildContactMailto() {
+    return buildMailtoHref({
+      to: CONTACT_EMAIL,
+      subject,
+      message,
+      name,
+      email,
+    });
   }
 
   function handleSubmit(e) {
     e.preventDefault();
-    window.location.href = buildMailtoHref();
+    window.location.href = buildContactMailto();
     setSent(true);
   }
 

@@ -5,6 +5,8 @@ import { createClient } from '@/lib/supabase/client';
 import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
+import AppSupportNav from '@/components/app/AppSupportNav';
+import AppFooter from '@/components/app/AppFooter';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
 import {
@@ -527,7 +529,7 @@ export default function DashboardPage() {
       <style>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-        .shell { min-height: 100vh; background: radial-gradient(circle at top left, rgba(37,99,235,0.07), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%), #f8fafc; }
+        .shell { min-height: 100vh; background: radial-gradient(circle at top left, rgba(37,99,235,0.07), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%), #f8fafc; display: flex; flex-direction: column; }
 
         .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 1px solid rgba(15,23,42,0.07); background: rgba(255,255,255,0.9); backdrop-filter: blur(20px); }
         .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
@@ -694,6 +696,7 @@ export default function DashboardPage() {
                 {managingBilling ? 'Opening...' : 'Manage billing'}
               </button>
             )}
+            <AppSupportNav variant="shell" />
             <a href="/search" className="btn-ghost">Job search</a>
             <a href="/profile" className="btn-ghost">Profile</a>
           </div>
@@ -1083,6 +1086,8 @@ export default function DashboardPage() {
             )}
           </div>
         </main>
+
+        <AppFooter />
       </div>
 
       {modalOpen && (

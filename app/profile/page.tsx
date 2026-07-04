@@ -26,6 +26,8 @@ import {
 import { RevealSection } from '@/components/app/profile-ui';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
+import AppSupportNav from '@/components/app/AppSupportNav';
+import AppFooter from '@/components/app/AppFooter';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 
@@ -230,7 +232,7 @@ export default function AppDashboardPage() {
   const initials = `${profile.personal.firstName.charAt(0) || ''}${profile.personal.lastName.charAt(0) || ''}`.toUpperCase() || '?';
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <nav className="app-topbar">
         <div className="app-brand">
           <div className="app-brand-mark">
@@ -277,6 +279,8 @@ export default function AppDashboardPage() {
               {'\u2728'} Upgrade to Pro
             </button>
           )}
+
+          <AppSupportNav variant="app" />
 
           {viewMode === 'search' && (
             <button type="button" className="app-btn app-btn-ghost" onClick={() => setViewMode('setup')}>
@@ -556,6 +560,8 @@ export default function AppDashboardPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AppFooter />
 
       {verifyBanner === 'success' && (
         <div className="app-status app-status-success" style={{ position: 'fixed', top: 90, right: 24, zIndex: 190, maxWidth: 360 }}>
