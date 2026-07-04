@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClaudeJson, createClaudeText, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
-import { flattenProfileForAi } from '@/lib/profile-data';
 import { sanitizeJobDescription } from '@/lib/api-response';
+import { loadUserProfileForAi } from '@/lib/server-profile';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
 
 export const maxDuration = 120;
@@ -60,12 +60,16 @@ export async function POST(request) {
     }
 
     const body = await request.json();
-    const { profile, jobDescription, jobTitle, company, applyUrl, mode } = body || {};
+    const { jobDescription, jobTitle, company, applyUrl, mode } = body || {};
 
     const normalizedMode = mode === 'cover_letter' || mode === 'cover' ? 'cover_letter' : 'resume';
 
-    if (!profile || typeof profile !== 'object') {
-      return NextResponse.json({ error: 'Profile is required.' }, { status: 400 });
+    const normalizedProfile = await loadUserProfileForAi(supabase, user.id, user.email);
+    if (!normalizedProfile) {
+      return NextResponse.json(
+        { error: 'Complete your profile before generating documents.' },
+        { status: 400 }
+      );
     }
 
     if (!jobDescription || typeof jobDescription !== 'string' || !jobDescription.trim()) {
@@ -76,30 +80,12 @@ export async function POST(request) {
     }
 
     const cleanedJobDescription = sanitizeJobDescription(jobDescription);
-
-    const normalizedProfile = flattenProfileForAi({
-      first_name: profile.first_name || profile.firstName || profile.full_name?.split(' ')?.[0] || '',
-      last_name:
-        profile.last_name ||
-        profile.lastName ||
-        profile.full_name?.split(' ')?.slice(1).join(' ') ||
-        '',
-      full_name:
-        profile.full_name ||
-        `${profile.first_name || profile.firstName || ''} ${profile.last_name || profile.lastName || ''}`.trim(),
-      email: profile.email || '',
-      phone: profile.phone || '',
-      address: profile.address || profile.location || '',
-      linkedin: profile.linkedin || '',
-      portfolio: profile.portfolio || profile.website || '',
-      summary: profile.summary || '',
-      experience: profile.experience || '',
-      education: profile.education || '',
-      certifications: profile.certifications || '',
-      skills: profile.skills || '',
-      projects: profile.projects || '',
-      additional_info: profile.additional_info || profile.additionalInfo || '',
-    });
+    if (!cleanedJobDescription.trim()) {
+      return NextResponse.json(
+        { error: 'Job description was empty after processing. Try pasting plain text from the posting.' },
+        { status: 400 }
+      );
+    }
 
     const profileForAi = {
       name: normalizedProfile.full_name || `${normalizedProfile.first_name || ''} ${normalizedProfile.last_name || ''}`.trim(),
@@ -151,6 +137,11 @@ ${cleanedJobDescription.slice(0, 8000)}`,
         return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
       }
 
+      if (!tailoredStructured || typeof tailoredStructured !== 'object') {
+        console.error('Tailor resume AI error: empty or invalid structured response');
+        return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
+      }
+
       tailoredStructured.name = tailoredStructured.name || candidateName;
       tailoredStructured.contact = {
         email: tailoredStructured?.contact?.email || normalizedProfile.email || '',
@@ -161,6 +152,10 @@ ${cleanedJobDescription.slice(0, 8000)}`,
       };
 
       resumeText = formatResumeAsText(tailoredStructured);
+      if (!resumeText.trim()) {
+        console.error('Tailor resume AI error: formatted resume was empty');
+        return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
+      }
 
       matchScore = Number.isInteger(tailoredStructured?.match_score)
         ? tailoredStructured.match_score
@@ -218,6 +213,11 @@ ${cleanedJobDescription.slice(0, 8000)}`,
         });
       } catch (err) {
         console.error('Tailor cover letter AI error:', err);
+        return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
+      }
+
+      if (!coverLetter?.trim()) {
+        console.error('Tailor cover letter AI error: empty response');
         return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
       }
     }
@@ -328,9 +328,10 @@ ${cleanedJobDescription.slice(0, 8000)}`,
 
 function formatResumeAsText(r) {
   const lines = [];
+  const asText = (value) => String(value ?? '').trim();
 
   if (r?.name) {
-    lines.push(r.name.trim());
+    lines.push(asText(r.name));
   }
 
   const contactParts = [
@@ -339,7 +340,9 @@ function formatResumeAsText(r) {
     r?.contact?.address,
     r?.contact?.linkedin,
     r?.contact?.portfolio,
-  ].filter(Boolean);
+  ]
+    .map(asText)
+    .filter(Boolean);
 
   if (contactParts.length) {
     lines.push(contactParts.join(' | '));
@@ -349,7 +352,7 @@ function formatResumeAsText(r) {
 
   if (r?.summary) {
     lines.push('SUMMARY');
-    lines.push(r.summary.trim());
+    lines.push(asText(r.summary));
     lines.push('');
   }
 
@@ -357,61 +360,68 @@ function formatResumeAsText(r) {
     lines.push('SKILLS');
 
     r.skills.forEach((skill) => {
-  lines.push(`- ${skill.trim()}`);
-});
+      const text = asText(typeof skill === 'string' ? skill : skill?.name || skill?.label);
+      if (text) lines.push(`- ${text}`);
+    });
 
     lines.push('');
   }
 
   if (Array.isArray(r?.experience) && r.experience.length) {
-  lines.push('EXPERIENCE');
+    lines.push('EXPERIENCE');
 
-  r.experience.forEach((exp) => {
-    const title = exp.title?.trim() || '';
-    const company = exp.company?.trim() || '';
-    const years = exp.years?.trim() || '';
+    r.experience.forEach((exp) => {
+      const title = asText(exp?.title);
+      const company = asText(exp?.company);
+      const years = asText(exp?.years);
 
-    const heading =
-      `${title}${company ? ' || ' + company : ''}${years ? ' || ' + years : ''}`.trim();
+      const heading =
+        `${title}${company ? ' || ' + company : ''}${years ? ' || ' + years : ''}`.trim();
 
-    if (heading) lines.push(heading);
+      if (heading) lines.push(heading);
 
-    if (Array.isArray(exp.bullets)) {
-      exp.bullets.forEach((b) => lines.push(`- ${b.trim()}`));
-    }
+      if (Array.isArray(exp?.bullets)) {
+        exp.bullets.forEach((b) => {
+          const bullet = asText(typeof b === 'string' ? b : b?.text);
+          if (bullet) lines.push(`- ${bullet}`);
+        });
+      }
 
-    lines.push('');
-  });
-}
+      lines.push('');
+    });
+  }
 
   if (Array.isArray(r?.projects) && r.projects.length) {
-  lines.push('PROJECTS');
+    lines.push('PROJECTS');
 
-  r.projects.forEach((project) => {
-    if (project?.name) {
-      const tech = project?.tech?.trim() || '';
-      const years = project?.years?.trim() || '';
-      const heading =
-        `${project.name.trim()}${tech ? ' || ' + tech : ''}${years ? ' || ' + years : ''}`.trim();
-      lines.push(heading);
-    }
+    r.projects.forEach((project) => {
+      if (project?.name) {
+        const tech = asText(project?.tech);
+        const years = asText(project?.years);
+        const heading =
+          `${asText(project.name)}${tech ? ' || ' + tech : ''}${years ? ' || ' + years : ''}`.trim();
+        if (heading) lines.push(heading);
+      }
 
-    if (Array.isArray(project?.details)) {
-      project.details
-        .filter(Boolean)
-        .forEach((d) => lines.push(`- ${d.trim()}`));
-    }
+      if (Array.isArray(project?.details)) {
+        project.details
+          .filter(Boolean)
+          .forEach((d) => {
+            const detail = asText(typeof d === 'string' ? d : d?.text);
+            if (detail) lines.push(`- ${detail}`);
+          });
+      }
 
-    lines.push('');
-  });
-}
+      lines.push('');
+    });
+  }
 
   if (Array.isArray(r?.education) && r.education.length) {
     lines.push('EDUCATION');
 
     r.education.forEach((ed) => {
       const row =
-        `${ed.degree || ''}${ed.institution ? ' - ' + ed.institution : ''}${ed.year ? ' | ' + ed.year : ''}`.trim();
+        `${asText(ed?.degree)}${ed?.institution ? ' - ' + asText(ed.institution) : ''}${ed?.year ? ' | ' + asText(ed.year) : ''}`.trim();
       if (row) lines.push(row);
     });
 
@@ -422,7 +432,10 @@ function formatResumeAsText(r) {
     lines.push('CERTIFICATIONS');
     r.certifications
       .filter(Boolean)
-      .forEach((c) => lines.push(`- ${c.trim()}`));
+      .forEach((c) => {
+        const cert = asText(typeof c === 'string' ? c : c?.name);
+        if (cert) lines.push(`- ${cert}`);
+      });
     lines.push('');
   }
 

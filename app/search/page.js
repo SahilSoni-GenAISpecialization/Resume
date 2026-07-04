@@ -6,8 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import { CONTACT_EMAIL } from '@/lib/site-config';
-import { getApiErrorMessage, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
-import { profileForTailorRequest } from '@/lib/profile-data';
+import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
 import { fetchMonthlyResumeUsage, FREE_RESUME_LIMIT } from '@/lib/usage';
 
 export default function SearchPage() {
@@ -484,9 +483,11 @@ function SearchPageContent() {
       const res = await fetch('/api/tailor-resume', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
         body: JSON.stringify({
-          profile: profileForTailorRequest(profile),
           jobDescription: sanitizeJobDescription(jd),
           jobTitle: title.slice(0, 300),
           company: comp.slice(0, 200),

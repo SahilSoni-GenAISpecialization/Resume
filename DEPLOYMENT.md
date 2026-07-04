@@ -184,8 +184,24 @@ server {
     listen 80;
     server_name applymatic.ca www.applymatic.ca;
 
+    location /api/ {
+        client_max_body_size 10M;
+        proxy_read_timeout 180s;
+        proxy_connect_timeout 180s;
+        proxy_send_timeout 180s;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location / {
         client_max_body_size 10M;
+        proxy_read_timeout 180s;
+        proxy_connect_timeout 180s;
+        proxy_send_timeout 180s;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -259,8 +275,8 @@ pm2 restart applymatic
 | Stripe checkout wrong domain | Set `NEXT_PUBLIC_SITE_URL=https://applymatic.ca` on server, rebuild |
 | Pro not unlocking | Run SQL migration; click “Sync status”; check `SUPABASE_SERVICE_ROLE_KEY` |
 | 502 Bad Gateway | Same as 503 — `pm2 logs applymatic` |
-| **"Internal error" when tailoring** | Visit `https://applymatic.ca/api/health` — if `aiConfigured` is `false`, add `ANTHROPIC_API_KEY` to production env and rebuild. If `true`, check `pm2 logs applymatic` while tailoring (timeout or WAF). |
-| **403 / "Forbidden" on tailor** | Request blocked before Next.js (Hostinger WAF) or free limit hit. Add `client_max_body_size 10M;` in nginx. Ensure `ANTHROPIC_API_KEY` is set. Check `pm2 logs applymatic` while tailoring. |
+| **"Internal error" when tailoring** | Visit `https://applymatic.ca/api/health?ai=1` — if `aiPing` is `fail`, the VPS cannot reach Claude (bad key, billing, or outbound firewall). If `aiPing` is `pass`, run `pm2 logs applymatic` while tailoring and check nginx timeouts (180s on `/api/`). |
+| **403 / "Forbidden" on tailor** | Hostinger WAF/nginx blocking the POST **before** it reaches Next.js. After deploying the latest code, requests no longer send the full profile in the body (smaller payload). Also: in Hostinger hPanel disable CDN/cache for `/api/*`, add `client_max_body_size 10M;` in nginx, whitelist ModSecurity for `/api/tailor-resume` and `/api/generate-thank-you-email`. Check `https://applymatic.ca/api/health` — `aiConfigured` must be `true`. Run `pm2 logs applymatic` while generating. |
 | Build runs out of memory | Add swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
 
 ### Fix 503 — run these on your VPS (SSH)

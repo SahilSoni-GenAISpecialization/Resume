@@ -6,8 +6,7 @@ import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import { CONTACT_EMAIL } from '@/lib/site-config';
-import { getApiErrorMessage, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
-import { profileForTailorRequest } from '@/lib/profile-data';
+import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
 import {
   countSavedGenerations,
   hasCoverLetter,
@@ -410,27 +409,13 @@ export default function DashboardPage() {
 
     try {
       const mode = type === 'cover' ? 'cover_letter' : 'resume';
-      const res = await fetch('/api/tailor-resume', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          profile: profileForTailorRequest(profile),
-          jobDescription: sanitizeJobDescription(jd),
-          jobTitle: String(app.job_title || '').slice(0, 300),
-          company: String(app.company || '').slice(0, 200),
-          applyUrl: String(app.apply_url || '').slice(0, 500),
-          mode,
-        }),
+      const json = await postJsonApi('/api/tailor-resume', {
+        jobDescription: sanitizeJobDescription(jd),
+        jobTitle: String(app.job_title || '').slice(0, 300),
+        company: String(app.company || '').slice(0, 200),
+        applyUrl: String(app.apply_url || '').slice(0, 500),
+        mode,
       });
-
-      const { json, text } = await readApiJson(res);
-      if (!res.ok) {
-        if (json?.error === 'FREE_LIMIT_REACHED') {
-          await refreshUsage();
-        }
-        throw new Error(getApiErrorMessage(res, json, text));
-      }
 
       const content = type === 'cover' ? json.coverLetter || '' : json.resume || '';
       const appId = app.id;
@@ -484,26 +469,12 @@ export default function DashboardPage() {
     setThankYou((t) => ({ ...t, loading: true, error: '' }));
 
     try {
-      const res = await fetch('/api/generate-thank-you-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          profile,
-          company: thankYou.app.company,
-          jobTitle: thankYou.app.job_title,
-          interviewDetails: thankYou.details,
-          applicationId: thankYou.app.id,
-        }),
+      const json = await postJsonApi('/api/generate-thank-you-email', {
+        company: thankYou.app.company,
+        jobTitle: thankYou.app.job_title,
+        interviewDetails: thankYou.details,
+        applicationId: thankYou.app.id,
       });
-
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(
-          json.error === 'FREE_LIMIT_REACHED'
-            ? 'You have used all 5 free generations this month. Upgrade to Pro for unlimited thank-you emails.'
-            : json.error || 'Failed to generate email'
-        );
-      }
 
       const result = { subject: json.subject || '', body: json.body || '' };
       const appId = thankYou.app.id;

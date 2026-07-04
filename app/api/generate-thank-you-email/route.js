@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createClaudeJson, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
-import { flattenProfileForAi } from '@/lib/profile-data';
+import { sanitizeFreeText } from '@/lib/api-response';
+import { loadUserProfileForAi } from '@/lib/server-profile';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
 import { saveThankYouEmailToApplication } from '@/lib/thank-you-storage';
+
+export const maxDuration = 120;
+export const dynamic = 'force-dynamic';
 
 export async function POST(request) {
   try {
@@ -52,7 +56,7 @@ export async function POST(request) {
     }
 
     const body = await request.json();
-    const { profile, company, jobTitle, interviewDetails, applicationId } = body || {};
+    const { company, jobTitle, interviewDetails, applicationId } = body || {};
 
     if (!company || !jobTitle) {
       return NextResponse.json(
@@ -61,14 +65,20 @@ export async function POST(request) {
       );
     }
 
-    const normalizedProfile = flattenProfileForAi(profile && typeof profile === 'object' ? profile : {});
+    const normalizedProfile = await loadUserProfileForAi(supabase, user.id, user.email);
+    if (!normalizedProfile) {
+      return NextResponse.json(
+        { error: 'Complete your profile before generating thank-you emails.' },
+        { status: 400 }
+      );
+    }
 
     const candidateName =
       normalizedProfile.full_name ||
       `${normalizedProfile.first_name || ''} ${normalizedProfile.last_name || ''}`.trim() ||
       'Candidate';
 
-    const details = String(interviewDetails || '').trim();
+    const details = sanitizeFreeText(interviewDetails || '');
 
     let parsed;
     try {
