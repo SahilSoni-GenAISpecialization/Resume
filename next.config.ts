@@ -1,5 +1,13 @@
 import type { NextConfig } from "next";
 
+const noStore = 'private, no-store, max-age=0, must-revalidate';
+const noStoreHeaders = [
+  { key: 'Cache-Control', value: noStore },
+  { key: 'CDN-Cache-Control', value: 'no-store' },
+  { key: 'Surrogate-Control', value: 'no-store' },
+  { key: 'Vary', value: 'RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Url' },
+];
+
 const nextConfig: NextConfig = {
   serverExternalPackages: ['pdf-parse'],
   output: 'standalone',
@@ -13,23 +21,39 @@ const nextConfig: NextConfig = {
       },
       {
         source: '/login',
-        headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
+        headers: noStoreHeaders,
+      },
+      {
+        source: '/contact',
+        headers: noStoreHeaders,
+      },
+      {
+        source: '/careers',
+        headers: noStoreHeaders,
       },
       {
         source: '/profile',
-        headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
+        headers: noStoreHeaders,
       },
       {
         source: '/profile/:path*',
-        headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
+        headers: noStoreHeaders,
+      },
+      {
+        source: '/dashboard',
+        headers: noStoreHeaders,
       },
       {
         source: '/dashboard/:path*',
-        headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
+        headers: noStoreHeaders,
+      },
+      {
+        source: '/search',
+        headers: noStoreHeaders,
       },
       {
         source: '/search/:path*',
-        headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' }],
+        headers: noStoreHeaders,
       },
     ];
   },

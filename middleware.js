@@ -4,6 +4,17 @@ import { getSiteUrl } from '@/lib/site-url';
 
 const PRIVATE_PREFIXES = ['/profile', '/dashboard', '/search'];
 
+const NO_CACHE_PATHS = new Set(['/login', '/contact', '/careers']);
+
+function applyNoCacheHeaders(response) {
+  response.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+  response.headers.set('Pragma', 'no-cache');
+  response.headers.set('Expires', '0');
+  response.headers.set('CDN-Cache-Control', 'no-store');
+  response.headers.set('Surrogate-Control', 'no-store');
+  response.headers.set('Vary', 'RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Url');
+}
+
 export async function middleware(request) {
   let supabaseResponse = NextResponse.next({ request });
   const siteUrl = getSiteUrl(request);
@@ -43,12 +54,13 @@ export async function middleware(request) {
   }
 
   if (user && pathname === '/login') {
-    return NextResponse.redirect(new URL('/profile', siteUrl));
+    const redirect = NextResponse.redirect(new URL('/profile', siteUrl));
+    applyNoCacheHeaders(redirect);
+    return redirect;
   }
 
-  if (isPrivate || pathname === '/login') {
-    supabaseResponse.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
-    supabaseResponse.headers.set('Pragma', 'no-cache');
+  if (isPrivate || NO_CACHE_PATHS.has(pathname)) {
+    applyNoCacheHeaders(supabaseResponse);
   }
 
   return supabaseResponse;

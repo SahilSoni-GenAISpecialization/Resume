@@ -6,7 +6,7 @@ type Props = {
   showEmail?: boolean;
 };
 
-export default function AppSupportNav({ variant = 'app', showEmail = true }: Props) {
+export default function AppSupportNav({ variant = 'app', showEmail = false }: Props) {
   const linkClass = variant === 'app' ? 'app-btn app-btn-ghost' : 'btn-ghost';
   const emailClass = variant === 'app' ? 'app-nav-contact-email' : 'nav-contact-email';
 

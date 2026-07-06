@@ -154,6 +154,25 @@ Ensure `JSEARCH_API_KEY` is active on your RapidAPI subscription.
 
 ---
 
+### 8. SMTP (contact & careers forms)
+
+Contact (`/contact`) and careers (`/careers`) forms send email server-side via **nodemailer**. Configure SMTP on your VPS:
+
+| Variable | Example | Notes |
+|----------|---------|-------|
+| `SMTP_HOST` | `smtp.hostinger.com` | Your mail provider's SMTP host |
+| `SMTP_PORT` | `587` | Usually 587 (STARTTLS) or 465 (SSL) |
+| `SMTP_SECURE` | `false` | Set `true` for port 465 |
+| `SMTP_USER` | `info@applymatic.ca` | SMTP login |
+| `SMTP_PASS` | `...` | Mailbox or app password |
+| `SMTP_FROM` | `Applymatic <info@applymatic.ca>` | Optional; defaults to `SMTP_USER` |
+
+All submissions are delivered to **info@applymatic.ca**. Contact form also sends an auto-reply to the user when SMTP allows.
+
+After adding SMTP vars, rebuild and restart PM2.
+
+---
+
 ## Part 2 — Push code to GitHub (from your PC)
 
 ```bash
@@ -207,6 +226,12 @@ STRIPE_SECRET_KEY=sk_live_...
 STRIPE_PRICE_ID=price_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 JSEARCH_API_KEY=...
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=...
+SMTP_PASS=...
+SMTP_FROM="Applymatic <info@applymatic.ca>"
 ```
 
 Next.js loads `.env.production` automatically when `NODE_ENV=production`.
@@ -282,7 +307,7 @@ Choose redirect HTTP → HTTPS when prompted.
 ## Part 4 — After go-live checklist
 
 - [ ] https://applymatic.ca loads landing page
-- [ ] Sign up / login (email + Google/GitHub if enabled)
+- [ ] Sign up / login (email + password)
 - [ ] Save profile on `/profile`
 - [ ] Job search works
 - [ ] Stripe checkout (live) → Pro unlocks
@@ -328,6 +353,8 @@ pm2 restart applymatic
 | **"Internal error" when tailoring** | Visit `https://applymatic.ca/api/health?ai=1` — if `aiPing` is `fail`, the VPS cannot reach Claude (bad key, billing, or outbound firewall). If `aiPing` is `pass`, run `pm2 logs applymatic` while tailoring and check nginx timeouts (180s on `/api/`). |
 | **403 / "Forbidden" on tailor** | Hostinger WAF/nginx blocking the POST **before** it reaches Next.js. After deploying the latest code, requests no longer send the full profile in the body (smaller payload). Also: in Hostinger hPanel disable CDN/cache for `/api/*`, add `client_max_body_size 10M;` in nginx, whitelist ModSecurity for `/api/tailor-resume` and `/api/generate-thank-you-email`. Check `https://applymatic.ca/api/health` — `aiConfigured` must be `true`. Run `pm2 logs applymatic` while generating. |
 | Build runs out of memory | Add swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
+| **Login shows raw RSC text** (`1:"$Sreact.fragment"`, etc.) | Hostinger CDN/nginx cached a React Server Components flight response and served it as HTML. Fixes in this repo: `app/login/layout.js` (`force-dynamic`), `Cache-Control: no-store` + `Vary: RSC, Next-Router-State-Tree` on `/login` and authenticated routes (middleware + `next.config.ts`), full-page `window.location.replace('/profile')` after email login (no client router). **On Hostinger:** disable CDN/cache for `/login`, `/profile`, `/dashboard`, `/search`; purge CDN cache after deploy. Verify response headers with `curl -I https://applymatic.ca/login` — `Cache-Control` must include `no-store`. |
+| Contact/careers form fails | Set `SMTP_*` env vars on VPS; rebuild; check `pm2 logs applymatic` for `SEND CONTACT ERROR` / `SEND CAREERS ERROR` |
 
 ### Fix 503 — run these on your VPS (SSH)
 

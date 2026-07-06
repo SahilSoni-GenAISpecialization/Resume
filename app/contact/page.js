@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { motion } from 'framer-motion';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
+import SupportBackLink from '@/components/SupportBackLink';
 import { CONTACT_EMAIL } from '@/lib/site-config';
-import { buildMailtoHref } from '@/lib/mailto';
+import { postJsonApi } from '@/lib/api-response';
 import '@/app/login.css';
 
 export default function ContactPage() {
@@ -13,22 +13,28 @@ export default function ContactPage() {
   const [email, setEmail] = useState('');
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
 
-  function buildContactMailto() {
-    return buildMailtoHref({
-      to: CONTACT_EMAIL,
-      subject,
-      message,
-      name,
-      email,
-    });
-  }
-
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    window.location.href = buildContactMailto();
-    setSent(true);
+    setLoading(true);
+    setError('');
+    setSent(false);
+
+    try {
+      await postJsonApi('/api/send-contact', { name, email, subject, message });
+      setSent(true);
+      setName('');
+      setEmail('');
+      setSubject('');
+      setMessage('');
+    } catch (err) {
+      setError(err?.message || 'Could not send your message. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -42,13 +48,7 @@ export default function ContactPage() {
           transition={{ duration: 0.5 }}
           style={{ marginBottom: 28 }}
         >
-          <Link href="/" className="login-back">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="19" y1="12" x2="5" y2="12" />
-              <polyline points="12 19 5 12 12 5" />
-            </svg>
-            Back to home
-          </Link>
+          <SupportBackLink />
         </motion.div>
 
         <motion.div
@@ -59,7 +59,7 @@ export default function ContactPage() {
         >
           <h1 className="login-card-title">Get in touch</h1>
           <p className="login-card-sub">
-            Questions, feedback, or an issue with your account? Send us a message and we'll get back to you at{' '}
+            Questions, feedback, or an issue with your account? Send us a message and we&apos;ll get back to you at{' '}
             <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--lp-blue)' }}>
               {CONTACT_EMAIL}
             </a>
@@ -118,18 +118,15 @@ export default function ContactPage() {
               />
             </div>
 
-            <button type="submit" className="login-submit">
-              Send message
+            {error && <div className="login-alert login-alert-error">{error}</div>}
+
+            <button type="submit" className="login-submit" disabled={loading}>
+              {loading ? 'Sending...' : 'Send message'}
             </button>
 
             {sent && (
               <div className="login-alert login-alert-success">
-                Your email app should have opened with this message ready to send to {CONTACT_EMAIL}. If nothing
-                opened, email us directly at{' '}
-                <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'inherit', fontWeight: 700 }}>
-                  {CONTACT_EMAIL}
-                </a>
-                .
+                Message received — we&apos;ll be in touch soon.
               </div>
             )}
           </form>
