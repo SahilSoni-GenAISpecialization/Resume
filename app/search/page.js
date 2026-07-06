@@ -5,7 +5,6 @@ import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
-import AppSupportNav from '@/components/app/AppSupportNav';
 import AppFooter from '@/components/app/AppFooter';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
@@ -1354,11 +1353,10 @@ function SearchPageContent() {
                 ✨ Upgrade to Pro
               </button>
             )}
-            <AppSupportNav variant="shell" />
             <a href="/dashboard" className="btn-ghost">Dashboard</a>
-  <button type="button" className="btn-ghost" onClick={handleLogout}>
-    Logout
-  </button>
+            <button type="button" className="btn-ghost" onClick={handleLogout}>
+              Logout
+            </button>
 </div>
         </nav>
 

@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
 import SupportBackLink from '@/components/SupportBackLink';
-import { CONTACT_EMAIL } from '@/lib/site-config';
+import { CAREERS_EMAIL } from '@/lib/site-config';
 import { postJsonApi } from '@/lib/api-response';
 import '@/app/login.css';
 
@@ -23,6 +23,15 @@ export default function CareersPage() {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    function handlePageShow(event) {
+      if (event.persisted) setLoading(false);
+    }
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -65,8 +74,8 @@ export default function CareersPage() {
             We&apos;re building AI tools that help people land the jobs they deserve. Send us your resume and a short
             note about what you&apos;d bring to the team — we&apos;ll be in touch once you&apos;re shortlisted.
           </p>
-          <a href={`mailto:${CONTACT_EMAIL}`} className="careers-email-pill">
-            {CONTACT_EMAIL}
+          <a href={`mailto:${CAREERS_EMAIL}`} className="careers-email-pill">
+            {CAREERS_EMAIL}
           </a>
         </motion.section>
 

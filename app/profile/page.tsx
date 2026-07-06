@@ -26,7 +26,6 @@ import {
 import { RevealSection } from '@/components/app/profile-ui';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
-import AppSupportNav from '@/components/app/AppSupportNav';
 import AppFooter from '@/components/app/AppFooter';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
@@ -279,8 +278,6 @@ export default function AppDashboardPage() {
               {'\u2728'} Upgrade to Pro
             </button>
           )}
-
-          <AppSupportNav variant="app" />
 
           {viewMode === 'search' && (
             <button type="button" className="app-btn app-btn-ghost" onClick={() => setViewMode('setup')}>

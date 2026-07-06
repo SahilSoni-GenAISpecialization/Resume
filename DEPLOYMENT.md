@@ -128,6 +128,12 @@ In [Stripe Dashboard](https://dashboard.stripe.com):
 
 **Customer Portal** (Settings → Billing → Customer portal): enable so “Manage billing” works.
 
+**Checkout branding** (if checkout shows the wrong business name, e.g. a sandbox account name):
+
+1. **Stripe Dashboard → Settings → Business → Business details** — set **Public business name** to `Applymatic`.
+2. **Settings → Branding** — upload logo/icon and set brand colors (applies to Checkout and Customer Portal).
+3. This repo also sets `branding_settings.display_name: "Applymatic"` when creating Checkout Sessions (`app/api/stripe/create-checkout-session/route.js`), which overrides the name at the top of Checkout for that session. Receipts, invoices, and portal may still use the account-level business name until you update step 1.
+
 **Webhook** (Developers → Webhooks → Add endpoint):
 
 - URL: `https://applymatic.ca/api/stripe/webhook`
@@ -167,7 +173,7 @@ Contact (`/contact`) and careers (`/careers`) forms send email server-side via *
 | `SMTP_PASS` | `...` | Mailbox or app password |
 | `SMTP_FROM` | `Applymatic <info@applymatic.ca>` | Optional; defaults to `SMTP_USER` |
 
-All submissions are delivered to **info@applymatic.ca**. Contact form also sends an auto-reply to the user when SMTP allows.
+Contact form submissions go to **info@applymatic.ca**. Careers applications go to **careers@applymatic.ca**. Contact form also sends an auto-reply to the user when SMTP allows.
 
 After adding SMTP vars, rebuild and restart PM2.
 
@@ -348,13 +354,14 @@ pm2 restart applymatic
 | Google shows `*.supabase.co` on sign-in | Configure OAuth consent screen app name “Applymatic”, verify `applymatic.ca`, publish app — see **§3b OAuth branding** |
 | GitHub shows wrong app name | Set GitHub OAuth app **Application name** to `Applymatic` — see **§3b** |
 | Stripe checkout wrong domain | Set `NEXT_PUBLIC_SITE_URL=https://applymatic.ca` on server, rebuild |
-| Pro not unlocking | Run SQL migration; click “Sync status”; check `SUPABASE_SERVICE_ROLE_KEY` |
+| Stripe checkout shows wrong business name | Set **Public business name** to `Applymatic` in Stripe Dashboard → Settings → Business; see **§5 Checkout branding** |
+| Pro not unlocking | Run SQL migration; return from checkout auto-verifies via `verify-session`; check `SUPABASE_SERVICE_ROLE_KEY` and webhook |
 | 502 Bad Gateway | Same as 503 — `pm2 logs applymatic` |
 | **"Internal error" when tailoring** | Visit `https://applymatic.ca/api/health?ai=1` — if `aiPing` is `fail`, the VPS cannot reach Claude (bad key, billing, or outbound firewall). If `aiPing` is `pass`, run `pm2 logs applymatic` while tailoring and check nginx timeouts (180s on `/api/`). |
 | **403 / "Forbidden" on tailor** | Hostinger WAF/nginx blocking the POST **before** it reaches Next.js. After deploying the latest code, requests no longer send the full profile in the body (smaller payload). Also: in Hostinger hPanel disable CDN/cache for `/api/*`, add `client_max_body_size 10M;` in nginx, whitelist ModSecurity for `/api/tailor-resume` and `/api/generate-thank-you-email`. Check `https://applymatic.ca/api/health` — `aiConfigured` must be `true`. Run `pm2 logs applymatic` while generating. |
 | Build runs out of memory | Add swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
 | **Login shows raw RSC text** (`1:"$Sreact.fragment"`, etc.) | Hostinger CDN/nginx cached a React Server Components flight response and served it as HTML. Fixes in this repo: `app/login/layout.js` (`force-dynamic`), `Cache-Control: no-store` + `Vary: RSC, Next-Router-State-Tree` on `/login` and authenticated routes (middleware + `next.config.ts`), full-page `window.location.replace('/profile')` after email login (no client router). **On Hostinger:** disable CDN/cache for `/login`, `/profile`, `/dashboard`, `/search`; purge CDN cache after deploy. Verify response headers with `curl -I https://applymatic.ca/login` — `Cache-Control` must include `no-store`. |
-| Contact/careers form fails | Set `SMTP_*` env vars on VPS; rebuild; check `pm2 logs applymatic` for `SEND CONTACT ERROR` / `SEND CAREERS ERROR` |
+| Contact/careers form fails | Set `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` (and optional `SMTP_PORT`, `SMTP_FROM`) on VPS; rebuild; check `pm2 logs applymatic` for `SEND CONTACT ERROR` / `SEND CAREERS ERROR`. API returns a clear message when SMTP is missing. |
 
 ### Fix 503 — run these on your VPS (SSH)
 

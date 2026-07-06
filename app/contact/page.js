@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
 import SupportBackLink from '@/components/SupportBackLink';
@@ -16,6 +16,15 @@ export default function ContactPage() {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    function handlePageShow(event) {
+      if (event.persisted) setLoading(false);
+    }
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();

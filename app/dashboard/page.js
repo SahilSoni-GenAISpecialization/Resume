@@ -5,7 +5,6 @@ import { createClient } from '@/lib/supabase/client';
 import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
-import AppSupportNav from '@/components/app/AppSupportNav';
 import AppFooter from '@/components/app/AppFooter';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
@@ -109,31 +108,8 @@ export default function DashboardPage() {
   });
 
   useEffect(() => {
-    // If the user navigates away (e.g. to the Stripe billing portal or checkout) and then hits
-    // the browser back button, bfcache can restore this page with stale "loading" state frozen
-    // mid-redirect. Reset those flags whenever the page becomes visible/restored again.
-    function resetStuckLoadingState(event) {
-      if (event && event.type === 'pageshow' && !event.persisted) return;
-      setManagingBilling(false);
-      setSyncingSub(false);
-    }
+    let cancelled = false;
 
-    function onVisibilityChange() {
-      if (document.visibilityState === 'visible') resetStuckLoadingState();
-    }
-
-    window.addEventListener('pageshow', resetStuckLoadingState);
-    window.addEventListener('focus', resetStuckLoadingState);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    return () => {
-      window.removeEventListener('pageshow', resetStuckLoadingState);
-      window.removeEventListener('focus', resetStuckLoadingState);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, []);
-
-  useEffect(() => {
     async function load() {
       const {
         data: { user },
@@ -144,10 +120,13 @@ export default function DashboardPage() {
         return;
       }
 
+      setLoading(true);
       const [{ data: p }, { data: apps }] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('applications').select('*').eq('user_id', user.id).order('applied_at', { ascending: false }),
       ]);
+
+      if (cancelled) return;
 
       setProfile(p || null);
       setApplications(apps || []);
@@ -156,6 +135,22 @@ export default function DashboardPage() {
     }
 
     load();
+
+    // bfcache can restore a frozen snapshot with loading stuck or stale data after
+    // Stripe checkout/portal or browser back — reload auth + dashboard data.
+    function handlePageShow(event) {
+      if (!event.persisted) return;
+      setManagingBilling(false);
+      setSyncingSub(false);
+      cancelled = false;
+      load();
+    }
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pageshow', handlePageShow);
+    };
   }, [supabase]);
 
   // When the user returns from the Stripe billing portal (e.g. after cancelling), re-sync their
@@ -205,6 +200,11 @@ export default function DashboardPage() {
     statusFilter === 'This month'
       ? thisMonthApps
       : applications;
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    window.location.href = '/';
+  }
 
   async function handleManageBilling() {
     setManagingBilling(true);
@@ -679,26 +679,16 @@ export default function DashboardPage() {
                 ✨ Upgrade to Pro
               </button>
             )}
-            {!loading && !usage.isPro && (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={handleSyncSubscription}
-                disabled={syncingSub}
-                style={{ fontSize: 12 }}
-                title="Already paid but still seeing the free tier? Click to re-check with Stripe."
-              >
-                {syncingSub ? 'Checking...' : 'Already paid? Sync status'}
-              </button>
-            )}
             {!loading && usage.isPro && (
               <button type="button" className="btn-ghost" onClick={handleManageBilling} disabled={managingBilling}>
                 {managingBilling ? 'Opening...' : 'Manage billing'}
               </button>
             )}
-            <AppSupportNav variant="shell" />
             <a href="/search" className="btn-ghost">Job search</a>
             <a href="/profile" className="btn-ghost">Profile</a>
+            <button type="button" className="btn-ghost" onClick={handleLogout}>
+              Logout
+            </button>
           </div>
         </nav>
 

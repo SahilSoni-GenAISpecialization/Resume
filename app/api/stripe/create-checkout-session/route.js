@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { COMPANY_NAME } from '@/lib/site-config';
 import { getProPriceId, getSiteUrl, getStripe } from '@/lib/stripe';
 import { resolveStripeCustomerId } from '@/lib/stripe-profile';
 
@@ -50,6 +51,14 @@ export async function POST(request) {
       metadata: { user_id: user.id },
       subscription_data: {
         metadata: { user_id: user.id },
+      },
+      branding_settings: {
+        display_name: COMPANY_NAME,
+      },
+      custom_text: {
+        submit: {
+          message: `Subscribe to ${COMPANY_NAME} Pro for unlimited resumes, cover letters, and thank-you emails.`,
+        },
       },
     });
 
