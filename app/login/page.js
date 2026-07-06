@@ -316,7 +316,15 @@ export default function LoginPage() {
           </div>
 
           <p className="login-legal">
-            By continuing you agree to our Terms of Service.
+            By continuing you agree to our{' '}
+            <Link href="/terms" style={{ color: 'var(--lp-blue)', fontWeight: 600 }}>
+              Terms of Service
+            </Link>{' '}
+            and{' '}
+            <Link href="/privacy" style={{ color: 'var(--lp-blue)', fontWeight: 600 }}>
+              Privacy Policy
+            </Link>
+            .
             <br />
             No credit card required.
           </p>

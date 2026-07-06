@@ -37,12 +37,19 @@ export default function AppFooter() {
             <a href="/search">Job search</a>
             <a href="/profile">Profile</a>
           </div>
+          <div className="app-site-footer-col">
+            <h4>Legal</h4>
+            <a href="/privacy">Privacy Policy</a>
+            <a href="/terms">Terms of Service</a>
+          </div>
         </div>
       </div>
 
       <div className="app-site-footer-bottom">
         <p>© {new Date().getFullYear()} {COMPANY_NAME}. All rights reserved.</p>
         <div className="app-site-footer-bottom-links">
+          <a href="/privacy">Privacy Policy</a>
+          <a href="/terms">Terms of Service</a>
           <a href="/contact">Contact</a>
           <a href="/careers">Careers</a>
         </div>

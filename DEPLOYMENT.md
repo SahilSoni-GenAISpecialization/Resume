@@ -61,6 +61,10 @@ Google and GitHub sign-in go **through Supabase’s auth server**, so the provid
    - Redirect URI must stay: `https://cyeyiztiyigrmgohedyx.supabase.co/auth/v1/callback`
    - Paste the same Client ID + Secret into Supabase → Authentication → Google.
 
+5. **Privacy policy URL** in OAuth consent screen must match the live site:
+   - `https://applymatic.ca/privacy`
+   - The homepage footer must link to the same URL (already on `/` footer after deploy).
+
 After verification, Google shows **Applymatic** with your logo. The “continue to …” line may still show `supabase.co` until you add a Supabase custom auth domain (below).
 
 #### GitHub

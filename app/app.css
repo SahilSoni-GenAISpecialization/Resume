@@ -957,9 +957,9 @@
 
 .app-site-footer-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 28px;
-  flex: 2 1 420px;
+  flex: 2 1 480px;
 }
 
 .app-site-footer-col h4 {

@@ -50,9 +50,20 @@ export default function Footer() {
               <a href="/careers">Careers</a>
               <a href={`mailto:${CAREERS_EMAIL}`}>{CAREERS_EMAIL}</a>
             </div>
+            <div className="lp-footer-col">
+              <h4>Legal</h4>
+              <a href="/privacy">Privacy Policy</a>
+              <a href="/terms">Terms of Service</a>
+            </div>
           </div>
 
-          <p style={{ color: 'var(--lp-faint)', fontSize: 13, width: '100%' }}>© 2026 Applymatic. All rights reserved.</p>
+          <div className="lp-footer-bottom">
+            <p style={{ color: 'var(--lp-faint)', fontSize: 13 }}>© 2026 Applymatic. All rights reserved.</p>
+            <div className="lp-footer-legal-links">
+              <a href="/privacy">Privacy Policy</a>
+              <a href="/terms">Terms of Service</a>
+            </div>
+          </div>
         </div>
       </footer>
     </>
