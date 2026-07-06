@@ -23,6 +23,14 @@ export type SubscriptionStatus = {
   periodEnd: string | null;
 };
 
+const USAGE_CACHE_TTL_MS = 2 * 60 * 1000;
+const usageCache = new Map<string, { at: number; usage: ResumeUsage }>();
+
+export function clearUsageCache(userId?: string | null) {
+  if (userId) usageCache.delete(userId);
+  else usageCache.clear();
+}
+
 /**
  * Real subscription status lives on the `profiles` row (set by Stripe checkout/webhooks),
  * not on the monthly `user_usage` row — a subscription persists across calendar months.
@@ -35,25 +43,8 @@ export async function fetchSubscription(
     return { isPro: false, cancelAtPeriodEnd: false, periodEnd: null };
   }
 
-  // Prefer server-side read (service role) — reliable even when no profile row existed before checkout.
-  if (typeof window !== 'undefined') {
-    try {
-      const res = await fetch('/api/stripe/pro-status', { credentials: 'same-origin' });
-      if (res.ok) {
-        const json = await res.json();
-        return {
-          isPro: !!json.isPro,
-          cancelAtPeriodEnd: !!json.cancelAtPeriodEnd,
-          periodEnd: json.periodEnd ?? null,
-        };
-      }
-    } catch {
-      /* fall through to direct read */
-    }
-  }
-
-  // Prefer the full select (includes the cancel flag). If that column hasn't been added to the
-  // `profiles` table yet, fall back to the minimal select so existing Pro users still work.
+  // Read from profiles via the signed-in user's Supabase client (RLS: own row only).
+  // Avoid routing every page load / tab focus through /api/stripe/pro-status.
   let { data, error } = await supabase
     .from('profiles')
     .select('is_pro, pro_current_period_end, pro_cancel_at_period_end')
@@ -106,7 +97,8 @@ export async function fetchProStatus(
 /** Shared usage pool for resume tailoring, cover letters, and thank-you emails. */
 export async function fetchMonthlyResumeUsage(
   supabase: SupabaseClient,
-  userId: string | null | undefined
+  userId: string | null | undefined,
+  options?: { force?: boolean }
 ): Promise<ResumeUsage> {
   if (!userId) {
     return {
@@ -117,6 +109,13 @@ export async function fetchMonthlyResumeUsage(
       cancelAtPeriodEnd: false,
       periodEnd: null,
     };
+  }
+
+  if (!options?.force && typeof window !== 'undefined') {
+    const cached = usageCache.get(userId);
+    if (cached && Date.now() - cached.at < USAGE_CACHE_TTL_MS) {
+      return cached.usage;
+    }
   }
 
   const month = getCurrentUsageMonth();
@@ -137,7 +136,7 @@ export async function fetchMonthlyResumeUsage(
 
   const used = usageRow?.tailor_count ?? 0;
 
-  return {
+  const usage: ResumeUsage = {
     used,
     limit: FREE_RESUME_LIMIT,
     remaining: sub.isPro ? Infinity : Math.max(FREE_RESUME_LIMIT - used, 0),
@@ -145,6 +144,12 @@ export async function fetchMonthlyResumeUsage(
     cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
     periodEnd: sub.periodEnd,
   };
+
+  if (typeof window !== 'undefined') {
+    usageCache.set(userId, { at: Date.now(), usage });
+  }
+
+  return usage;
 }
 
 export async function resetMonthlyResumeUsage(supabase: SupabaseClient, userId: string) {

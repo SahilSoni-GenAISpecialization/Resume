@@ -350,7 +350,7 @@ pm2 restart applymatic
 | Issue | Fix |
 |-------|-----|
 | **503 Service Unavailable** | App is not running. SSH in and run the steps below. |
-| OAuth redirect error | Add production callback URLs in Supabase |
+| **High traffic on `/api/stripe/pro-status`** | Fixed in app: client reads Pro status from Supabase directly with a 2‑min cache; no per-tab-focus API calls. After deploy, this endpoint should only be hit if called manually. |
 | Google shows `*.supabase.co` on sign-in | Configure OAuth consent screen app name “Applymatic”, verify `applymatic.ca`, publish app — see **§3b OAuth branding** |
 | GitHub shows wrong app name | Set GitHub OAuth app **Application name** to `Applymatic` — see **§3b** |
 | Stripe checkout wrong domain | Set `NEXT_PUBLIC_SITE_URL=https://applymatic.ca` on server, rebuild |

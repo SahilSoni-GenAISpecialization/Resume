@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import '@/app/app.css';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  clearUsageCache,
   fetchMonthlyResumeUsage,
   formatUsageLabel,
   FREE_RESUME_LIMIT,
@@ -43,10 +44,10 @@ export function useResumeUsage(supabase: SupabaseClient, userId?: string | null)
     const activeUserId = userId;
     let cancelled = false;
 
-    async function load() {
+    async function load(force = false) {
       setLoading(true);
       try {
-        const stats = await fetchMonthlyResumeUsage(supabase, activeUserId);
+        const stats = await fetchMonthlyResumeUsage(supabase, activeUserId, { force });
         if (!cancelled) {
           setUsage(stats);
         }
@@ -59,39 +60,27 @@ export function useResumeUsage(supabase: SupabaseClient, userId?: string | null)
 
     load();
 
-    const refresh = () => {
-      cancelled = false;
-      load();
-    };
-
-    window.addEventListener('focus', refresh);
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') refresh();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-
     // Browser back/forward cache can restore the page with loading stuck mid-fetch
     // (e.g. after returning from Stripe checkout). Re-fetch when that happens.
     const onPageShow = (event: Event) => {
       if (!(event as PageTransitionEvent).persisted) return;
       cancelled = false;
-      load();
+      load(true);
     };
     window.addEventListener('pageshow', onPageShow);
 
     return () => {
       cancelled = true;
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pageshow', onPageShow);
     };
   }, [supabase, userId]);
 
   async function refreshUsage() {
     if (!userId) return;
+    clearUsageCache(userId);
     setLoading(true);
     try {
-      const stats = await fetchMonthlyResumeUsage(supabase, userId);
+      const stats = await fetchMonthlyResumeUsage(supabase, userId, { force: true });
       setUsage(stats);
     } finally {
       setLoading(false);
@@ -103,14 +92,16 @@ export function useResumeUsage(supabase: SupabaseClient, userId?: string | null)
     loading,
     refresh: refreshUsage,
     /** Immediately reflect Pro after Stripe checkout, before profile fetch completes. */
-    markPro: () =>
+    markPro: () => {
+      clearUsageCache(userId);
       setUsage((prev) => ({
         ...prev,
         isPro: true,
         remaining: Infinity,
         cancelAtPeriodEnd: false,
         periodEnd: null,
-      })),
+      }));
+    },
     /** Optimistically bump the used count right when an action starts, before the request resolves. */
     bump: () =>
       setUsage((prev) =>

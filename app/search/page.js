@@ -417,8 +417,7 @@ function SearchPageContent() {
       return;
     }
 
-    const freshUsage = await fetchMonthlyResumeUsage(supabase, userId);
-    await refreshUsage();
+    const freshUsage = await fetchMonthlyResumeUsage(supabase, userId, { force: true });
 
     if (!freshUsage.isPro && freshUsage.used >= FREE_RESUME_LIMIT) {
       setTailorError(FREE_LIMIT_MESSAGE);
