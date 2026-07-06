@@ -4,7 +4,16 @@ import { getSiteUrl } from '@/lib/site-url';
 
 const PRIVATE_PREFIXES = ['/profile', '/dashboard', '/search'];
 
-const NO_CACHE_PATHS = new Set(['/login', '/contact', '/careers']);
+const NO_CACHE_EXACT = new Set([
+  '/login',
+  '/contact',
+  '/careers',
+  '/privacy',
+  '/terms',
+  '/dashboard',
+  '/search',
+  '/profile',
+]);
 
 function applyNoCacheHeaders(response) {
   response.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
@@ -12,7 +21,18 @@ function applyNoCacheHeaders(response) {
   response.headers.set('Expires', '0');
   response.headers.set('CDN-Cache-Control', 'no-store');
   response.headers.set('Surrogate-Control', 'no-store');
-  response.headers.set('Vary', 'RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Url');
+  response.headers.set(
+    'Vary',
+    'RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Url, Accept'
+  );
+  response.headers.set('X-Accel-Expires', '0');
+}
+
+function pathNeedsNoCache(pathname) {
+  if (NO_CACHE_EXACT.has(pathname)) return true;
+  return PRIVATE_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
 }
 
 export async function middleware(request) {
@@ -50,16 +70,18 @@ export async function middleware(request) {
   );
 
   if (!user && isPrivate) {
-    return NextResponse.redirect(new URL('/login', siteUrl));
-  }
-
-  if (user && pathname === '/login') {
-    const redirect = NextResponse.redirect(new URL('/profile', siteUrl));
+    const redirect = NextResponse.redirect(new URL('/login', siteUrl));
     applyNoCacheHeaders(redirect);
     return redirect;
   }
 
-  if (isPrivate || NO_CACHE_PATHS.has(pathname)) {
+  if (user && pathname === '/login') {
+    const redirect = NextResponse.redirect(new URL('/dashboard', siteUrl));
+    applyNoCacheHeaders(redirect);
+    return redirect;
+  }
+
+  if (pathNeedsNoCache(pathname)) {
     applyNoCacheHeaders(supabaseResponse);
   }
 

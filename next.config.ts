@@ -5,7 +5,8 @@ const noStoreHeaders = [
   { key: 'Cache-Control', value: noStore },
   { key: 'CDN-Cache-Control', value: 'no-store' },
   { key: 'Surrogate-Control', value: 'no-store' },
-  { key: 'Vary', value: 'RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Url' },
+  { key: 'Vary', value: 'RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Url, Accept' },
+  { key: 'X-Accel-Expires', value: '0' },
 ];
 
 const nextConfig: NextConfig = {
@@ -29,6 +30,14 @@ const nextConfig: NextConfig = {
       },
       {
         source: '/careers',
+        headers: noStoreHeaders,
+      },
+      {
+        source: '/privacy',
+        headers: noStoreHeaders,
+      },
+      {
+        source: '/terms',
         headers: noStoreHeaders,
       },
       {
