@@ -456,6 +456,43 @@ export default function AppDashboardPage() {
                 </RevealSection>
 
                 <RevealSection className="app-section">
+                  {profile.pendingItems.length > 0 && (
+                    <div className="app-pending-box" style={{ marginBottom: 24 }}>
+                      <div className="app-section-head" style={{ marginBottom: 12 }}>
+                        <div>
+                          <h2 className="app-section-title">Pending from job match analysis</h2>
+                          <p className="app-section-desc">
+                            Suggestions you saved while reviewing match scores. Add them to your profile when ready.
+                          </p>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {profile.pendingItems.map((item) => (
+                          <div
+                            key={item.id}
+                            style={{
+                              padding: '12px 14px',
+                              borderRadius: 12,
+                              border: '1px solid var(--app-border)',
+                              background: 'rgba(37, 99, 235, 0.04)',
+                            }}
+                          >
+                            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, textTransform: 'capitalize' }}>
+                              {item.type}
+                            </div>
+                            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--app-text)' }}>{item.text}</div>
+                            {(item.jobTitle || item.company) && (
+                              <div style={{ fontSize: 12, color: 'var(--app-muted)', marginTop: 6 }}>
+                                From {item.jobTitle || 'role'}
+                                {item.company ? ` at ${item.company}` : ''}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="app-field app-field-full">
                     <label>Additional information</label>
                     <textarea

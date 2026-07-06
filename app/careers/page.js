@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
 import SupportBackLink from '@/components/SupportBackLink';
+import TallyEmbed from '@/components/TallyEmbed';
 import { CAREERS_EMAIL } from '@/lib/site-config';
-import { postJsonApi } from '@/lib/api-response';
 import '@/app/login.css';
 
 const PERKS = [
@@ -16,43 +15,6 @@ const PERKS = [
 ];
 
 export default function CareersPage() {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [linkedin, setLinkedin] = useState('');
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    function handlePageShow(event) {
-      if (event.persisted) setLoading(false);
-    }
-
-    window.addEventListener('pageshow', handlePageShow);
-    return () => window.removeEventListener('pageshow', handlePageShow);
-  }, []);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setSent(false);
-
-    try {
-      await postJsonApi('/api/send-careers', { name, email, linkedin, message });
-      setSent(true);
-      setName('');
-      setEmail('');
-      setLinkedin('');
-      setMessage('');
-    } catch (err) {
-      setError(err?.message || 'Could not send your application. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
     <main className="login-page careers-page">
       <AnimatedBackground />
@@ -72,7 +34,7 @@ export default function CareersPage() {
           <h1>We&apos;re always hiring and expanding</h1>
           <p>
             We&apos;re building AI tools that help people land the jobs they deserve. Send us your resume and a short
-            note about what you&apos;d bring to the team — we&apos;ll be in touch once you&apos;re shortlisted.
+            note about what you&apos;d bring to the team — we&apos;ll be back once you&apos;re shortlisted.
           </p>
           <a href={`mailto:${CAREERS_EMAIL}`} className="careers-email-pill">
             {CAREERS_EMAIL}
@@ -90,7 +52,7 @@ export default function CareersPage() {
         </section>
 
         <motion.section
-          className="login-card careers-form-card"
+          className="login-card careers-form-card tally-card"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.08, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
@@ -101,71 +63,7 @@ export default function CareersPage() {
             shortlisted.
           </p>
 
-          <form className="login-form" onSubmit={handleSubmit}>
-            <div className="login-field">
-              <label htmlFor="name">Full name</label>
-              <input
-                id="name"
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Jane Doe"
-                className="login-input"
-              />
-            </div>
-
-            <div className="login-field">
-              <label htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="login-input"
-              />
-            </div>
-
-            <div className="login-field">
-              <label htmlFor="linkedin">LinkedIn or portfolio (optional)</label>
-              <input
-                id="linkedin"
-                type="url"
-                value={linkedin}
-                onChange={(e) => setLinkedin(e.target.value)}
-                placeholder="https://linkedin.com/in/you"
-                className="login-input"
-              />
-            </div>
-
-            <div className="login-field">
-              <label htmlFor="message">Tell us about yourself</label>
-              <textarea
-                id="message"
-                required
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Share your experience, what you'd like to work on, and why Applymatic..."
-                className="login-input"
-                rows={6}
-                style={{ resize: 'vertical', lineHeight: 1.6, fontFamily: 'inherit' }}
-              />
-            </div>
-
-            {error && <div className="login-alert login-alert-error">{error}</div>}
-
-            <button type="submit" className="login-submit" disabled={loading}>
-              {loading ? 'Sending...' : 'Submit application'}
-            </button>
-
-            {sent && (
-              <div className="login-alert login-alert-success">
-                Application sent — we&apos;ll be in touch once you&apos;re shortlisted.
-              </div>
-            )}
-          </form>
+          <TallyEmbed variant="standard" title="Careers at Applymatic" />
         </motion.section>
       </div>
     </main>

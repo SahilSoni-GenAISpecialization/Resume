@@ -376,8 +376,20 @@
   margin-left: -8px;
 }
 
-.login-trust-avatar:first-child {
-  margin-left: 0;
+.tally-card {
+  overflow: hidden;
+}
+
+.tally-card iframe {
+  display: block;
+  width: 100%;
+}
+
+.tally-full-page {
+  position: relative;
+  min-height: calc(100vh - 64px);
+  margin: 0;
+  overflow: hidden;
 }
 
 /* Careers page */

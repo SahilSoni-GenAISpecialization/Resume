@@ -10,6 +10,16 @@ import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
 import { fetchMonthlyResumeUsage, FREE_RESUME_LIMIT } from '@/lib/usage';
+import {
+  profileRowToStructured,
+  structuredToDbPayload,
+  addPendingSuggestion,
+  addSkillToProfile,
+  addCertificationToProfile,
+  classifyMatchSuggestion,
+  extractItemLabel,
+  suggestionSupportsHaveThis,
+} from '@/lib/profile-data';
 
 export default function SearchPage() {
   return (
@@ -81,6 +91,12 @@ function SearchPageContent() {
   const [downloadMenu, setDownloadMenu] = useState({ open: false, type: null });
   const [isExporting, setIsExporting] = useState(false);
 
+  const [matchToast, setMatchToast] = useState('');
+  const [pendingAdded, setPendingAdded] = useState(new Set());
+  const [matchEditor, setMatchEditor] = useState(null);
+  const [matchEditorSaving, setMatchEditorSaving] = useState(false);
+  const [profileActionLoading, setProfileActionLoading] = useState('');
+
   const hasReachedFreeLimit = !usage.isPro && usage.used >= FREE_LIMIT;
 
   useEffect(() => {
@@ -138,6 +154,12 @@ function SearchPageContent() {
       window.removeEventListener('pageshow', handlePageShow);
     };
   }, [supabase]);
+
+  useEffect(() => {
+    if (!profile) return;
+    const structured = profileRowToStructured(profile, profile.email || '');
+    setPendingAdded(new Set(structured.pendingItems.map((item) => item.text)));
+  }, [profile]);
 
   useEffect(() => {
     if (!isTailoring) {
@@ -710,6 +732,111 @@ function SearchPageContent() {
           'Tailoring experience',
         ];
 
+  function getJobMeta() {
+    return {
+      jobTitle: tailorResult?.jobTitle || jobTitle || selectedJob?.title || '',
+      company: tailorResult?.company || company || selectedJob?.company || '',
+    };
+  }
+
+  function showMatchToast(message) {
+    setMatchToast(message);
+    window.setTimeout(() => setMatchToast(''), 3200);
+  }
+
+  async function reloadProfileRow() {
+    const { data: row } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (row) setProfile(row);
+    return row;
+  }
+
+  async function persistStructured(structured) {
+    const payload = structuredToDbPayload(structured, userId);
+    const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
+    await reloadProfileRow();
+  }
+
+  async function handleAddSuggestionPending(text) {
+    if (!userId || !profile) return;
+    setProfileActionLoading(text);
+    try {
+      const structured = profileRowToStructured(profile, profile.email || '');
+      const updated = addPendingSuggestion(structured, text, getJobMeta());
+      await persistStructured(updated);
+      setPendingAdded((prev) => new Set(prev).add(text));
+      showMatchToast('Added to your profile as pending.');
+    } catch (err) {
+      showMatchToast(err?.message || 'Could not save to profile.');
+    } finally {
+      setProfileActionLoading('');
+    }
+  }
+
+  function openHaveThisEditor(text) {
+    const type = classifyMatchSuggestion(text);
+    setMatchEditor({
+      text,
+      type,
+      label: extractItemLabel(text, type),
+      issuer: '',
+    });
+  }
+
+  async function handleConfirmHaveThis() {
+    if (!matchEditor || !userId || !profile) return;
+    setMatchEditorSaving(true);
+    try {
+      let structured = profileRowToStructured(profile, profile.email || '');
+      if (matchEditor.type === 'skill') {
+        structured = addSkillToProfile(structured, matchEditor.label);
+      } else {
+        structured = addCertificationToProfile(structured, matchEditor.label, matchEditor.issuer);
+      }
+      await persistStructured(structured);
+      setPendingAdded((prev) => new Set(prev).add(matchEditor.text));
+      setMatchEditor(null);
+      showMatchToast('Added to your profile.');
+    } catch (err) {
+      showMatchToast(err?.message || 'Could not update profile.');
+    } finally {
+      setMatchEditorSaving(false);
+    }
+  }
+
+  function renderMatchSuggestion(text, keyPrefix, index) {
+    const type = classifyMatchSuggestion(text);
+    const supportsHaveThis = suggestionSupportsHaveThis(type);
+    const isAdded = pendingAdded.has(text);
+    const loadingThis = profileActionLoading === text;
+
+    return (
+      <li key={`${keyPrefix}-${index}`} className="match-list-item">
+        <div className="match-list-text">{text}</div>
+        <div className="match-list-actions">
+          {supportsHaveThis && (
+            <button
+              type="button"
+              className="match-action-btn match-have-btn"
+              onClick={() => openHaveThisEditor(text)}
+              disabled={!!profileActionLoading || matchEditorSaving}
+            >
+              Do you have this?
+            </button>
+          )}
+          <button
+            type="button"
+            className="match-action-btn match-add-btn"
+            onClick={() => handleAddSuggestionPending(text)}
+            disabled={isAdded || !!profileActionLoading || matchEditorSaving}
+          >
+            {loadingThis ? 'Saving...' : isAdded ? 'Added ✓' : 'Add to profile'}
+          </button>
+        </div>
+      </li>
+    );
+  }
+
   return (
     <>
       <style>{`
@@ -1235,6 +1362,96 @@ function SearchPageContent() {
         }
         .match-section-tips .match-section-title { color: #059669; }
         .match-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+        .match-list-item {
+          background: rgba(255,255,255,0.72);
+          border: 1px solid rgba(15,23,42,0.08);
+          border-radius: 12px;
+          padding: 14px 16px;
+        }
+        .match-list-text {
+          font-size: 13.5px;
+          color: #334155;
+          line-height: 1.6;
+          margin-bottom: 12px;
+        }
+        .match-list-actions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .match-action-btn {
+          border-radius: 8px;
+          padding: 8px 12px;
+          font-size: 12px;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .match-add-btn {
+          border: 1px solid rgba(37,99,235,0.25);
+          background: rgba(37,99,235,0.08);
+          color: #2563eb;
+        }
+        .match-add-btn:hover:not(:disabled) { background: rgba(37,99,235,0.14); }
+        .match-have-btn {
+          border: 1px solid rgba(5,150,105,0.25);
+          background: rgba(5,150,105,0.08);
+          color: #059669;
+        }
+        .match-have-btn:hover:not(:disabled) { background: rgba(5,150,105,0.14); }
+        .match-action-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+        .match-inline-editor {
+          margin-top: 14px;
+          padding: 16px;
+          border-radius: 12px;
+          border: 1px solid rgba(5,150,105,0.25);
+          background: rgba(5,150,105,0.06);
+        }
+        .match-inline-title {
+          font-size: 13px;
+          font-weight: 700;
+          color: #0f172a;
+          margin-bottom: 12px;
+        }
+        .match-inline-field { margin-bottom: 10px; }
+        .match-inline-field label {
+          display: block;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: #64748b;
+          margin-bottom: 6px;
+        }
+        .match-inline-field input {
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: 1px solid rgba(15,23,42,0.12);
+          font-family: inherit;
+          font-size: 13px;
+        }
+        .match-inline-actions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-top: 12px;
+        }
+        .match-toast {
+          position: fixed;
+          top: 88px;
+          right: 24px;
+          z-index: 180;
+          max-width: 320px;
+          padding: 12px 16px;
+          border-radius: 12px;
+          background: #0f172a;
+          color: #fff;
+          font-size: 13px;
+          font-weight: 600;
+          box-shadow: 0 16px 40px rgba(15,23,42,0.22);
+        }
         .match-list li {
           font-size: 13.5px;
           color: #334155;
@@ -1895,9 +2112,7 @@ function SearchPageContent() {
                       <div className="match-section">
                         <div className="match-section-title">Why this score</div>
                         <ul className="match-list">
-                          {matchReasonsList.map((line, i) => (
-                            <li key={i}>{line}</li>
-                          ))}
+                          {matchReasonsList.map((line, i) => renderMatchSuggestion(line, 'reason', i))}
                         </ul>
                       </div>
                     )}
@@ -1906,10 +2121,52 @@ function SearchPageContent() {
                       <div className="match-section match-section-tips">
                         <div className="match-section-title">🚀 How to reach 85%+ match</div>
                         <ul className="match-list">
-                          {matchTipsList.map((line, i) => (
-                            <li key={i}>{line}</li>
-                          ))}
+                          {matchTipsList.map((line, i) => renderMatchSuggestion(line, 'tip', i))}
                         </ul>
+                      </div>
+                    )}
+
+                    {matchEditor && (
+                      <div className="match-inline-editor">
+                        <div className="match-inline-title">Do you have this?</div>
+                        <div className="match-inline-field">
+                          <label>
+                            {matchEditor.type === 'skill' ? 'Skill name' : 'Certification / requirement'}
+                          </label>
+                          <input
+                            value={matchEditor.label}
+                            onChange={(e) => setMatchEditor((prev) => ({ ...prev, label: e.target.value }))}
+                            placeholder={matchEditor.type === 'skill' ? 'e.g. Python, AWS, Project Management' : 'e.g. PMP, AWS Solutions Architect'}
+                          />
+                        </div>
+                        {matchEditor.type !== 'skill' && (
+                          <div className="match-inline-field">
+                            <label>Issuer (optional)</label>
+                            <input
+                              value={matchEditor.issuer}
+                              onChange={(e) => setMatchEditor((prev) => ({ ...prev, issuer: e.target.value }))}
+                              placeholder="e.g. PMI, Amazon Web Services"
+                            />
+                          </div>
+                        )}
+                        <div className="match-inline-actions">
+                          <button
+                            type="button"
+                            className="match-action-btn match-have-btn"
+                            onClick={handleConfirmHaveThis}
+                            disabled={matchEditorSaving || !matchEditor.label.trim()}
+                          >
+                            {matchEditorSaving ? 'Saving...' : 'Yes, add to profile'}
+                          </button>
+                          <button
+                            type="button"
+                            className="match-action-btn match-add-btn"
+                            onClick={() => setMatchEditor(null)}
+                            disabled={matchEditorSaving}
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
                     )}
 
@@ -2043,6 +2300,8 @@ function SearchPageContent() {
       />
 
       <UpgradeBanner show={!usage.isPro} onUpgradeClick={openUpgradeModal} />
+
+      {!!matchToast && <div className="match-toast">{matchToast}</div>}
     </>
   );
 }

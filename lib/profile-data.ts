@@ -63,7 +63,20 @@ export type StructuredProfile = {
   skills: string[];
   projects: ProjectItem[];
   additionalInfo: string;
+  pendingItems: PendingProfileItem[];
 };
+
+export type PendingProfileItem = {
+  id: string;
+  text: string;
+  type: 'skill' | 'certification' | 'license' | 'experience' | 'education' | 'general';
+  status: 'pending' | 'confirmed' | 'dismissed';
+  createdAt: string;
+  jobTitle?: string;
+  company?: string;
+};
+
+const PENDING_JSON_MARKER = '---APPLYMATIC_PENDING---';
 
 export function uid() {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -130,7 +143,128 @@ export function initialStructuredProfile(email = ''): StructuredProfile {
     skills: [''],
     projects: [emptyProject()],
     additionalInfo: '',
+    pendingItems: [],
   };
+}
+
+export function parseAdditionalInfoField(raw: string): { notes: string; pendingItems: PendingProfileItem[] } {
+  const trimmed = (raw || '').trim();
+  const idx = trimmed.indexOf(PENDING_JSON_MARKER);
+  if (idx === -1) return { notes: trimmed, pendingItems: [] };
+
+  const notes = trimmed.slice(0, idx).trim();
+  const json = trimmed.slice(idx + PENDING_JSON_MARKER.length).trim();
+
+  try {
+    const parsed = JSON.parse(json);
+    if (!Array.isArray(parsed)) return { notes: trimmed, pendingItems: [] };
+    return {
+      notes,
+      pendingItems: parsed.filter((p) => p && p.status === 'pending'),
+    };
+  } catch {
+    return { notes: trimmed, pendingItems: [] };
+  }
+}
+
+export function formatAdditionalInfoField(notes: string, pendingItems: PendingProfileItem[]): string {
+  const pending = (pendingItems || []).filter((p) => p.status === 'pending');
+  const cleanNotes = notes.trim();
+  if (!pending.length) return cleanNotes;
+  return `${cleanNotes}\n\n${PENDING_JSON_MARKER}\n${JSON.stringify(pending)}`.trim();
+}
+
+export function classifyMatchSuggestion(text: string): PendingProfileItem['type'] {
+  const t = text.toLowerCase();
+  if (/certif|credential|cissp|comptia|pmp\b|aws certified|azure certified/.test(t)) return 'certification';
+  if (/licen[sc]e|registered|registration/.test(t)) return 'license';
+  if (/skill|technolog|proficien|tool|software|framework|programming|language|stack|platform|knowledge of|experience with|familiar with|learn|highlight|add.*skill/.test(t)) {
+    return 'skill';
+  }
+  if (/degree|education|bachelor|master|diploma|university|college/.test(t)) return 'education';
+  if (/experience|years|leadership|manage|demonstrate|background in|history of|project/.test(t)) return 'experience';
+  return 'general';
+}
+
+export function extractItemLabel(text: string, type: PendingProfileItem['type']): string {
+  const quoted = text.match(/["']([^"']+)["']/);
+  if (quoted?.[1]) return quoted[1].trim();
+
+  const skillMatch = text.match(
+    /(?:add|highlight|include|mention|obtain|get|learn|develop)\s+(?:the\s+)?([A-Za-z0-9+#./\s-]{2,40}?)(?:\s+(?:skill|certification|experience|to your profile)|[.,]|$)/i
+  );
+  if (skillMatch?.[1]) return skillMatch[1].trim();
+
+  if (type === 'certification' || type === 'license') {
+    const certMatch = text.match(/(?:certification|certificate|license|credential)\s+(?:in|for)?\s*([A-Za-z0-9+#./\s-]{2,40})/i);
+    if (certMatch?.[1]) return certMatch[1].trim();
+  }
+
+  const firstSentence = text.split(/[.—]/)[0]?.trim() || text.trim();
+  return firstSentence.length > 72 ? `${firstSentence.slice(0, 72)}…` : firstSentence;
+}
+
+export function suggestionSupportsHaveThis(type: PendingProfileItem['type']): boolean {
+  return type === 'skill' || type === 'certification' || type === 'license';
+}
+
+export function addPendingSuggestion(
+  profile: StructuredProfile,
+  text: string,
+  meta?: { jobTitle?: string; company?: string }
+): StructuredProfile {
+  const trimmed = text.trim();
+  if (!trimmed) return profile;
+
+  const type = classifyMatchSuggestion(trimmed);
+  const alreadyPending = profile.pendingItems.some(
+    (item) => item.status === 'pending' && item.text.toLowerCase() === trimmed.toLowerCase()
+  );
+  if (alreadyPending) return profile;
+
+  const item: PendingProfileItem = {
+    id: uid(),
+    text: trimmed,
+    type,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    jobTitle: meta?.jobTitle,
+    company: meta?.company,
+  };
+
+  return { ...profile, pendingItems: [...profile.pendingItems, item] };
+}
+
+export function addSkillToProfile(profile: StructuredProfile, skillName: string): StructuredProfile {
+  const skill = skillName.trim();
+  if (!skill) return profile;
+
+  const existing = profile.skills.map((s) => s.trim().toLowerCase());
+  if (existing.includes(skill.toLowerCase())) return profile;
+
+  const skills = [...profile.skills.filter((s) => s.trim()), skill];
+  return { ...profile, skills };
+}
+
+export function addCertificationToProfile(
+  profile: StructuredProfile,
+  name: string,
+  issuer = ''
+): StructuredProfile {
+  const certName = name.trim();
+  if (!certName) return profile;
+
+  const certs = [...profile.certifications];
+  const emptyIndex = certs.findIndex((c) => !c.name.trim());
+  const newCert = { ...emptyCertification(), id: uid(), name: certName, issuer: issuer.trim() };
+
+  if (emptyIndex >= 0) {
+    certs[emptyIndex] = newCert;
+  } else {
+    certs.push(newCert);
+  }
+
+  return { ...profile, certifications: certs };
 }
 
 function tryParseJson<T>(raw: string): T | null {
@@ -211,6 +345,7 @@ export function profileRowToStructured(row: Record<string, unknown> | null, emai
   if (!row) return initialStructuredProfile(email);
 
   const certs = parseCertificationsField(String(row.certifications || ''));
+  const { notes, pendingItems } = parseAdditionalInfoField(String(row.additional_info || ''));
 
   return {
     personal: {
@@ -228,7 +363,8 @@ export function profileRowToStructured(row: Record<string, unknown> | null, emai
     licenses: certs.licenses,
     skills: parseSkillsField(String(row.skills || '')),
     projects: parseProjectsField(String(row.projects || '')),
-    additionalInfo: String(row.additional_info || ''),
+    additionalInfo: notes,
+    pendingItems,
   };
 }
 
@@ -253,7 +389,7 @@ export function structuredToDbPayload(profile: StructuredProfile, userId: string
     }),
     skills: JSON.stringify(profile.skills.filter((s) => s.trim())),
     projects: JSON.stringify(profile.projects),
-    additional_info: profile.additionalInfo.trim(),
+    additional_info: formatAdditionalInfoField(profile.additionalInfo, profile.pendingItems),
     updated_at: new Date().toISOString(),
   };
 }
