@@ -21,6 +21,10 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: '/',
+        headers: noStoreHeaders,
+      },
+      {
         source: '/login',
         headers: noStoreHeaders,
       },

@@ -264,7 +264,7 @@ server {
     server_name applymatic.ca www.applymatic.ca;
 
     # Never cache app HTML/RSC — Hostinger CDN must not store flight payloads for these paths.
-    location ~ ^/(login|profile|dashboard|search|contact|careers|privacy|terms)(/|$) {
+    location ~ ^/(login|profile|dashboard|search|contact|careers|privacy|terms)(/|$)|^/$ {
         client_max_body_size 10M;
         proxy_read_timeout 180s;
         proxy_connect_timeout 180s;
@@ -379,7 +379,7 @@ pm2 restart applymatic
 | **"Internal error" when tailoring** | Visit `https://applymatic.ca/api/health?ai=1` — if `aiPing` is `fail`, the VPS cannot reach Claude (bad key, billing, or outbound firewall). If `aiPing` is `pass`, run `pm2 logs applymatic` while tailoring and check nginx timeouts (180s on `/api/`). |
 | **403 / "Forbidden" on tailor** | Hostinger WAF/nginx blocking the POST **before** it reaches Next.js. After deploying the latest code, requests no longer send the full profile in the body (smaller payload). Also: in Hostinger hPanel disable CDN/cache for `/api/*`, add `client_max_body_size 10M;` in nginx, whitelist ModSecurity for `/api/tailor-resume` and `/api/generate-thank-you-email`. Check `https://applymatic.ca/api/health` — `aiConfigured` must be `true`. Run `pm2 logs applymatic` while generating. |
 | Build runs out of memory | Add swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
-| **Login shows raw RSC text** (`1:"$Sreact.fragment"`, etc.) | Hostinger CDN/nginx cached a React Server Components flight response and served it as HTML. **Code fixes:** server-rendered `app/login/page.js` + client `LoginForm.jsx`, `Cache-Control: no-store` + `Vary: RSC, Accept` on app routes, full-page redirect to `/dashboard` after login (no client router). **On Hostinger (required):** hPanel → CDN → disable cache for `/login`, `/dashboard`, `/profile`, `/search`; purge all CDN cache after deploy. **On nginx:** use the dedicated `location ~ ^/(login|profile|...)` block in §3.5 with `proxy_no_cache 1`. Verify: `curl -I https://applymatic.ca/login` must show `Cache-Control: no-store`. Test in a fresh private window after purge. |
+| **Login or homepage shows raw RSC text** (`1:"$Sreact.fragment"`, etc.) | Hostinger CDN/nginx cached a React Server Components flight response and served it as HTML. **Code fixes:** `Cache-Control: no-store` + `Vary: RSC, Accept` on `/`, `/login`, `/dashboard`, `/profile`, `/search`, and other app routes; server-rendered `app/login/page.js` + client `LoginForm.jsx`; full-page redirect to `/dashboard` after login (no client router). **On Hostinger (required):** hPanel → CDN → disable cache for `/`, `/login`, `/dashboard`, `/profile`, `/search`; purge all CDN cache after deploy. **On nginx:** use the dedicated `location ~ ^/(login|profile|...)|^/$` block in §3.5 with `proxy_no_cache 1`. Verify: `curl -I https://applymatic.ca/` and `curl -I https://applymatic.ca/login` must show `Cache-Control: no-store`. Test in a fresh private window after purge. |
 | Contact/careers form fails | Set `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` (and optional `SMTP_PORT`, `SMTP_FROM`) on VPS; rebuild; check `pm2 logs applymatic` for `SEND CONTACT ERROR` / `SEND CAREERS ERROR`. API returns a clear message when SMTP is missing. |
 
 ### Fix 503 — run these on your VPS (SSH)

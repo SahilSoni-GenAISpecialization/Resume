@@ -5,6 +5,7 @@ import { getSiteUrl } from '@/lib/site-url';
 const PRIVATE_PREFIXES = ['/profile', '/dashboard', '/search'];
 
 const NO_CACHE_EXACT = new Set([
+  '/',
   '/login',
   '/contact',
   '/careers',
