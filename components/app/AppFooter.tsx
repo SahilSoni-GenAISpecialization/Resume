@@ -1,3 +1,4 @@
+import BrandLogo from '@/components/BrandLogo';
 import { CAREERS_EMAIL, COMPANY_NAME, CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 
@@ -7,13 +8,7 @@ export default function AppFooter() {
       <div className="app-site-footer-inner">
         <div className="app-site-footer-brand">
           <div className="app-site-footer-logo">
-            <div className="app-brand-mark">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-            </div>
-            <span className="app-site-footer-name">{COMPANY_NAME}</span>
+            <BrandLogo variant="footer" showName={false} />
           </div>
           <p className="app-site-footer-tagline">
             AI-powered resumes, cover letters, and job search — built for modern professionals.

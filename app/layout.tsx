@@ -11,6 +11,10 @@ const plusJakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: 'Applymatic — AI Job Applications',
   description: 'Upload your resume, find jobs, get AI-tailored resumes and cover letters instantly.',
+  icons: {
+    icon: '/applymatic-logo.png',
+    apple: '/applymatic-logo.png',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

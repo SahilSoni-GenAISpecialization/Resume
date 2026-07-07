@@ -6,6 +6,7 @@ import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import AppFooter from '@/components/app/AppFooter';
+import BrandLogo from '@/components/BrandLogo';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
 import {
@@ -531,8 +532,8 @@ export default function DashboardPage() {
         body { background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         .shell { min-height: 100vh; background: radial-gradient(circle at top left, rgba(37,99,235,0.07), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%), #f8fafc; display: flex; flex-direction: column; }
 
-        .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 1px solid rgba(15,23,42,0.07); background: rgba(255,255,255,0.9); backdrop-filter: blur(20px); }
-        .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
+        .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; min-height: 148px; padding: 10px 28px; border-bottom: 1px solid rgba(15,23,42,0.07); background: rgba(255,255,255,0.9); backdrop-filter: blur(20px); }
+        .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; flex-shrink: 0; }
         .brand-mark { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, #2563eb, #7c3aed); display: flex; align-items: center; justify-content: center; }
         .brand-name { font-size: 17px; font-weight: 700; }
         .topbar-right { display: flex; align-items: center; gap: 10px; }
@@ -578,7 +579,27 @@ export default function DashboardPage() {
         .td-company { font-weight: 700; color: #0f172a; }
         .td-role { color: #334155; }
         .td-date { color: #64748b; font-size: 12px; white-space: nowrap; }
-        .td-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+        tbody td:last-child,
+        thead th:last-child { min-width: 300px; width: 34%; }
+        .td-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr auto;
+          grid-template-rows: auto auto;
+          gap: 8px;
+          width: 100%;
+          max-width: 340px;
+          margin-left: auto;
+        }
+        .td-actions .action-resume { grid-column: 1; grid-row: 1; }
+        .td-actions .action-cover { grid-column: 2; grid-row: 1; }
+        .td-actions .action-thank { grid-column: 1 / 3; grid-row: 2; }
+        .td-actions .action-delete { grid-column: 3; grid-row: 2; align-self: stretch; }
+        .td-actions .icon-btn.action-resume,
+        .td-actions .icon-btn.action-cover,
+        .td-actions .icon-btn.action-thank {
+          width: 100%;
+          justify-content: center;
+        }
 
         .status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; white-space: nowrap; }
         .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
@@ -654,15 +675,7 @@ export default function DashboardPage() {
       <div className="shell">
         <nav className="topbar">
           <a href="/profile" className="brand">
-            <div className="brand-mark">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="8" y1="13" x2="16" y2="13" />
-                <line x1="8" y1="17" x2="14" y2="17" />
-              </svg>
-            </div>
-            <div className="brand-name">Applymatic</div>
+            <BrandLogo variant="nav" showName={false} />
           </a>
 
           <div className="topbar-right">
@@ -959,8 +972,7 @@ export default function DashboardPage() {
                             {hasTailoredResume(app) ? (
                               <button
                                 type="button"
-                                className="icon-btn generated"
-                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                className="icon-btn generated action-resume"
                                 onClick={() => openDocViewer(app, 'resume')}
                                 title="View saved tailored resume"
                               >
@@ -973,8 +985,7 @@ export default function DashboardPage() {
                             ) : (
                               <button
                                 type="button"
-                                className="icon-btn"
-                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                className="icon-btn action-resume"
                                 onClick={() => openTailorWizard(app, 'resume')}
                                 title="Generate a tailored resume for this application"
                               >
@@ -989,8 +1000,7 @@ export default function DashboardPage() {
                             {hasCoverLetter(app) ? (
                               <button
                                 type="button"
-                                className="icon-btn generated"
-                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                className="icon-btn generated action-cover"
                                 onClick={() => openDocViewer(app, 'cover')}
                                 title="View saved cover letter"
                               >
@@ -1005,8 +1015,7 @@ export default function DashboardPage() {
                             ) : (
                               <button
                                 type="button"
-                                className="icon-btn"
-                                style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                                className="icon-btn action-cover"
                                 onClick={() => openTailorWizard(app, 'cover')}
                                 title="Generate a cover letter for this application"
                               >
@@ -1022,8 +1031,7 @@ export default function DashboardPage() {
 
                             <button
                               type="button"
-                              className={`icon-btn thank${hasThankYouEmail(app) ? ' generated' : ''}`}
-                              style={{ flex: '1 1 auto', justifyContent: 'center' }}
+                              className={`icon-btn thank action-thank${hasThankYouEmail(app) ? ' generated' : ''}`}
                               onClick={() => openThankYou(app)}
                               title={hasThankYouEmail(app) ? 'View saved thank-you email' : 'Generate thank-you email'}
                             >
@@ -1036,7 +1044,7 @@ export default function DashboardPage() {
 
                             <button
                               type="button"
-                              className="icon-btn danger"
+                              className="icon-btn danger action-delete"
                               onClick={() => setDeleteId(deleteId === app.id ? null : app.id)}
                               title="Delete application"
                             >

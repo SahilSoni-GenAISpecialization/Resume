@@ -7,7 +7,7 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const siteUrl = getSiteUrl(request);
-  const destination = `${siteUrl}/profile`;
+  const destination = `${siteUrl}/dashboard`;
 
   if (!code) {
     return NextResponse.redirect(`${siteUrl}/login?error=missing_code`);

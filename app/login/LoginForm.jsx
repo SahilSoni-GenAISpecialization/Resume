@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
+import BrandLogo from '@/components/BrandLogo';
 import { getClientSiteUrl } from '@/lib/site-url';
 import '@/app/login.css';
 
@@ -13,11 +14,31 @@ const TRUST = [
   { c: '#e8a33d', i: 'A' },
 ];
 
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
+      <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z" />
+      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z" />
+    </svg>
+  );
+}
+
+function GithubIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="#0f172a" aria-hidden>
+      <path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.6 9.6 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 22 12c0-5.52-4.48-10-10-10z" />
+    </svg>
+  );
+}
+
 export default function LoginForm() {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const supabase = createClient();
@@ -26,6 +47,29 @@ export default function LoginForm() {
     // Full document navigation — never use Next.js client router here (Hostinger CDN RSC bug).
     const target = `${window.location.origin}/dashboard`;
     window.location.replace(target);
+  }
+
+  async function handleOAuth(provider) {
+    setError('');
+    setMessage('');
+    setOauthLoading(provider);
+
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: `${getClientSiteUrl()}/api/auth/callback` },
+    });
+
+    if (oauthError) {
+      const msg = oauthError.message || '';
+      if (msg.includes('provider is not enabled') || msg.includes('Unsupported provider')) {
+        setError(
+          `${provider === 'google' ? 'Google' : 'GitHub'} sign-in is not enabled yet. Enable it in Supabase under Authentication → Providers.`
+        );
+      } else {
+        setError(msg);
+      }
+      setOauthLoading('');
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -75,15 +119,7 @@ export default function LoginForm() {
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05, duration: 0.5 }}>
           <a href="/" className="login-brandmark">
-            <div className="login-logo-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-              </svg>
-            </div>
-            <span className="login-logo-text">Applymatic</span>
+            <BrandLogo variant="hero" showName={false} />
           </a>
         </motion.div>
 
@@ -136,6 +172,37 @@ export default function LoginForm() {
               </button>
             ))}
           </div>
+
+          <div className="login-social-group">
+            <button
+              type="button"
+              className="login-social-btn"
+              onClick={() => handleOAuth('google')}
+              disabled={!!oauthLoading || loading}
+            >
+              {oauthLoading === 'google' ? (
+                <span className="login-spinner" style={{ borderTopColor: '#2563eb', borderColor: 'rgba(37,99,235,0.25)' }} />
+              ) : (
+                <GoogleIcon />
+              )}
+              Continue with Google
+            </button>
+            <button
+              type="button"
+              className="login-social-btn"
+              onClick={() => handleOAuth('github')}
+              disabled={!!oauthLoading || loading}
+            >
+              {oauthLoading === 'github' ? (
+                <span className="login-spinner" style={{ borderTopColor: '#0f172a', borderColor: 'rgba(15,23,42,0.25)' }} />
+              ) : (
+                <GithubIcon />
+              )}
+              Continue with GitHub
+            </button>
+          </div>
+
+          <div className="login-divider">or continue with email</div>
 
           <form className="login-form" onSubmit={handleSubmit}>
             <div className="login-field">

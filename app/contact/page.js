@@ -1,11 +1,13 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
 import SupportBackLink from '@/components/SupportBackLink';
-import TallyEmbed from '@/components/TallyEmbed';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/login.css';
+
+const TallyEmbed = dynamic(() => import('@/components/TallyEmbed'), { ssr: false });
 
 export default function ContactPage() {
   return (
@@ -30,7 +32,7 @@ export default function ContactPage() {
         >
           <h1 className="login-card-title">Get in touch</h1>
           <p className="login-card-sub">
-            Questions, feedback, or an issue with your account? Fill out the form below or email us at{' '}
+            We read every message and typically reply within one business day. You can also reach us at{' '}
             <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--lp-blue)' }}>
               {CONTACT_EMAIL}
             </a>

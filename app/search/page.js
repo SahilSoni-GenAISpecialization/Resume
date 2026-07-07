@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import AppFooter from '@/components/app/AppFooter';
+import BrandLogo from '@/components/BrandLogo';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
@@ -1020,12 +1021,21 @@ function SearchPageContent() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 16px 28px;
+          min-height: 148px;
+          padding: 10px 28px;
           border-bottom: 1px solid rgba(15,23,42,0.07);
           background: rgba(255,255,255,0.9);
           backdrop-filter: blur(20px);
         }
-        .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
+        .brand { display: flex; align-items: center; gap: 14px; text-decoration: none; color: inherit; flex-shrink: 0; }
+        .brand-page-title {
+          font-size: 18px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          color: #0f172a;
+          line-height: 1.1;
+          white-space: nowrap;
+        }
         .brand-mark {
           width: 36px;
           height: 36px;
@@ -1791,19 +1801,9 @@ function SearchPageContent() {
 
       <div className="shell">
         <nav className="topbar">
-          <a href="/" className="brand">
-            <div className="brand-mark">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="8" y1="13" x2="16" y2="13" />
-                <line x1="8" y1="17" x2="14" y2="17" />
-              </svg>
-            </div>
-            <div>
-              <div className="brand-name">Applymatic</div>
-              <div style={{ color: '#64748b', fontSize: '12px', marginTop: 1 }}>Job Search</div>
-            </div>
+          <a href="/dashboard" className="brand">
+            <BrandLogo variant="nav" showName={false} />
+            <span className="brand-page-title">Job Search</span>
           </a>
 
           <div className="topbar-right">

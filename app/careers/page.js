@@ -1,11 +1,13 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
 import AnimatedBackground from '@/components/landing/AnimatedBackground';
 import SupportBackLink from '@/components/SupportBackLink';
-import TallyEmbed from '@/components/TallyEmbed';
 import { CAREERS_EMAIL } from '@/lib/site-config';
 import '@/app/login.css';
+
+const TallyEmbed = dynamic(() => import('@/components/TallyEmbed'), { ssr: false });
 
 const PERKS = [
   { icon: '🌍', title: 'Remote-first', text: 'Work from anywhere in Canada with flexible hours.' },

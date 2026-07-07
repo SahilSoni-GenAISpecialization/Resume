@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import BrandLogo from '@/components/BrandLogo';
 
 const NAV_ITEMS = [
   ['How it works', 'how-it-works'],
@@ -50,15 +51,7 @@ export default function Navbar({ scrollTo }) {
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       >
         <a href="/" className="lp-logo">
-          <div className="lp-logo-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-            </svg>
-          </div>
-          <span className="lp-logo-text">Applymatic</span>
+          <BrandLogo variant="nav" showName={false} />
         </a>
 
         <div className="lp-nav-links">

@@ -27,6 +27,7 @@ import { RevealSection } from '@/components/app/profile-ui';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import AppFooter from '@/components/app/AppFooter';
+import BrandLogo from '@/components/BrandLogo';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 
@@ -233,18 +234,13 @@ export default function AppDashboardPage() {
   return (
     <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <nav className="app-topbar">
-        <div className="app-brand">
-          <div className="app-brand-mark">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-            </svg>
-          </div>
+        <a href="/" className="app-brand" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <BrandLogo variant="nav" showName={false} />
           <div>
             <div className="app-brand-name">Applymatic</div>
             <div className="app-brand-sub">{viewMode === 'search' ? 'Ready to search' : 'Profile setup'}</div>
           </div>
-        </div>
+        </a>
 
         <div className="app-topbar-right">
           <AnimatePresence>
@@ -456,43 +452,6 @@ export default function AppDashboardPage() {
                 </RevealSection>
 
                 <RevealSection className="app-section">
-                  {profile.pendingItems.length > 0 && (
-                    <div className="app-pending-box" style={{ marginBottom: 24 }}>
-                      <div className="app-section-head" style={{ marginBottom: 12 }}>
-                        <div>
-                          <h2 className="app-section-title">Pending from job match analysis</h2>
-                          <p className="app-section-desc">
-                            Suggestions you saved while reviewing match scores. Add them to your profile when ready.
-                          </p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {profile.pendingItems.map((item) => (
-                          <div
-                            key={item.id}
-                            style={{
-                              padding: '12px 14px',
-                              borderRadius: 12,
-                              border: '1px solid var(--app-border)',
-                              background: 'rgba(37, 99, 235, 0.04)',
-                            }}
-                          >
-                            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, textTransform: 'capitalize' }}>
-                              {item.type}
-                            </div>
-                            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--app-text)' }}>{item.text}</div>
-                            {(item.jobTitle || item.company) && (
-                              <div style={{ fontSize: 12, color: 'var(--app-muted)', marginTop: 6 }}>
-                                From {item.jobTitle || 'role'}
-                                {item.company ? ` at ${item.company}` : ''}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   <div className="app-field app-field-full">
                     <label>Additional information</label>
                     <textarea

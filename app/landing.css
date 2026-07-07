@@ -48,11 +48,12 @@
   left: 0;
   right: 0;
   z-index: 200;
-  height: 72px;
+  height: 180px;
   padding: 0 clamp(20px, 4vw, 40px);
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  justify-content: space-between;
+  gap: 20px;
   transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
@@ -66,7 +67,11 @@
 .lp-nav-links {
   display: flex;
   align-items: center;
-  gap: 28px;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 22px;
+  justify-self: center;
+  min-width: 0;
 }
 
 .lp-nav-link {
@@ -87,11 +92,32 @@
 .lp-logo {
   display: flex;
   align-items: center;
-  gap: 11px;
   text-decoration: none;
   color: inherit;
-  min-width: 0;
-  flex-shrink: 1;
+  flex-shrink: 0;
+  justify-self: start;
+}
+
+.brand-logo {
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.brand-logo img,
+.brand-logo-image {
+  width: auto !important;
+  max-width: none !important;
+}
+
+.lp-nav .brand-logo--nav .brand-logo-image {
+  height: 156px !important;
+  width: auto !important;
+}
+
+.topbar .brand-logo--nav .brand-logo-image,
+.app-topbar .brand-logo--nav .brand-logo-image {
+  height: 120px !important;
+  width: auto !important;
 }
 
 .lp-logo-icon {
@@ -111,11 +137,17 @@
   letter-spacing: -0.02em;
 }
 
+.lp-footer-brand-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
 .lp-nav-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+  justify-self: end;
 }
 
 .lp-nav-actions-desktop {
@@ -288,7 +320,7 @@
 
 /* Hero */
 .lp-hero {
-  padding: 130px clamp(20px, 4vw, 40px) 80px;
+  padding: 228px clamp(20px, 4vw, 40px) 80px;
   background:
     radial-gradient(ellipse 80% 60% at 50% -10%, rgba(37, 99, 235, 0.08), transparent),
     linear-gradient(180deg, #ffffff 0%, var(--lp-bg) 100%);
@@ -1574,9 +1606,15 @@
 
 @media (max-width: 768px) {
   .lp-nav {
-    height: 64px;
+    display: flex;
+    justify-content: space-between;
+    height: 108px;
     padding: 0 16px;
     gap: 12px;
+  }
+
+  .lp-nav .brand-logo--nav .brand-logo-image {
+    height: 84px !important;
   }
 
   .lp-nav-links { display: none; }
@@ -1599,7 +1637,12 @@
   }
 
   .lp-hero {
-    padding-top: 96px;
+    padding-top: 156px;
+  }
+
+  .lp-footer-brand-block .brand-logo img {
+    height: 88px !important;
+    min-width: auto !important;
   }
 
   .lp-steps-grid-4 { grid-template-columns: 1fr; }
