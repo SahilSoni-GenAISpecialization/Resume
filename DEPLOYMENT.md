@@ -154,9 +154,16 @@ Ensure billing is enabled and you have sufficient quota for production traffic.
 
 ---
 
-### 7. RapidAPI (JSearch)
+### 7. Job search (JSearch + Freehire fallback)
 
-Ensure `JSEARCH_API_KEY` is active on your RapidAPI subscription.
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `JSEARCH_API_KEY` | Yes (for primary) | RapidAPI JSearch — upgrade plan before launch |
+| `FREEHIRE_API_BASE` | No | Defaults to `https://freehire.dev/api/v1` backup when JSearch quota is hit |
+
+Applymatic tries **JSearch first**, then automatically falls back to **Freehire** when the monthly RapidAPI quota is exhausted (testing) or the key is missing. Job IDs are prefixed (`jsearch:…` / `freehire:…`) so details load from the correct provider.
+
+After upgrading JSearch, no code changes are needed — remove the quota limit and JSearch will be used again automatically.
 
 ---
 

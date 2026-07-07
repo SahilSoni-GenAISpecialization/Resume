@@ -98,6 +98,7 @@ function SearchPageContent() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
+  const [searchInfo, setSearchInfo] = useState('');
 
   const [selectedJob, setSelectedJob] = useState(null);
   const [jobDetails, setJobDetails] = useState(null);
@@ -379,6 +380,9 @@ function SearchPageContent() {
 
     setSearchPage(page);
     setHasMoreJobs(hasMore);
+    setSearchInfo(
+      !append && json.meta?.fallbackUsed && json.meta?.message ? json.meta.message : ''
+    );
 
     return json;
   }
@@ -389,6 +393,7 @@ function SearchPageContent() {
     setIsSearching(true);
     setIsLoadingMore(false);
     setSearchError('');
+    setSearchInfo('');
     setSearchResults([]);
     setSearchPage(1);
     setHasMoreJobs(false);
@@ -2008,6 +2013,7 @@ function SearchPageContent() {
                   </button>
                 </div>
 
+                {searchInfo && <div className="info-box">{searchInfo}</div>}
                 {searchError && <div className="error-box">{searchError}</div>}
               </>
             )}

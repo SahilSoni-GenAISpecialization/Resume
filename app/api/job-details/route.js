@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getJobDetails } from '@/lib/job-providers';
 
 export async function GET(request) {
   try {
@@ -20,45 +21,16 @@ export async function GET(request) {
       return NextResponse.json({ error: 'job_id is required.' }, { status: 400 });
     }
 
-    const response = await fetch(
-      `https://jsearch.p.rapidapi.com/job-details?job_id=${encodeURIComponent(jobId)}`,
-      {
-        headers: {
-          'x-rapidapi-host': 'jsearch.p.rapidapi.com',
-          'x-rapidapi-key': process.env.JSEARCH_API_KEY,
-        },
-        cache: 'no-store',
-      }
-    );
+    const result = await getJobDetails(jobId);
 
-    if (!response.ok) {
-      const text = await response.text();
+    if (!result.ok) {
       return NextResponse.json(
-        { error: `Job details API failed: ${text}` },
-        { status: 502 }
+        { error: result.error || 'Failed to fetch job details' },
+        { status: result.status || 502 }
       );
     }
 
-    const data = await response.json();
-    const job = Array.isArray(data?.data) ? data.data[0] : data?.data;
-
-    if (!job) {
-      return NextResponse.json({ error: 'Job not found.' }, { status: 404 });
-    }
-
-    return NextResponse.json({
-      job: {
-        jobId: job.job_id || '',
-        title: job.job_title || '',
-        company: job.employer_name || '',
-        location: [job.job_city, job.job_state, job.job_country].filter(Boolean).join(', '),
-        type: job.job_employment_type || '',
-        description: job.job_description || '',
-        applyUrl: job.job_apply_link || '',
-        postedAt: job.job_posted_at_datetime_utc || '',
-        source: job.job_publisher || '',
-      },
-    });
+    return NextResponse.json({ job: result.job });
   } catch (err) {
     console.error('JOB DETAILS ERROR:', err);
     return NextResponse.json({ error: err.message || 'Failed to fetch job details' }, { status: 500 });
