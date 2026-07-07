@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import { createClaudeJson, createClaudeText, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
 import { sanitizeJobDescription } from '@/lib/api-response';
-import { loadUserProfileForAi } from '@/lib/server-profile';
+import { filterAddressedSuggestions } from '@/lib/profile-data';
+import { applyMatchScoreAdjustments, filterMatchAnalysis } from '@/lib/match-scoring';
+import { loadUserProfileBundle } from '@/lib/server-profile';
 import { FREE_RESUME_LIMIT, fetchProStatus, getCurrentUsageMonth } from '@/lib/usage';
 
 export const maxDuration = 120;
@@ -47,30 +49,66 @@ export async function POST(request) {
 
     const count = usageRow?.tailor_count || 0;
 
-    if (!isPro && count >= FREE_RESUME_LIMIT) {
-      return NextResponse.json(
-        {
-          error: 'FREE_LIMIT_REACHED',
-          message:
-            'You have used all 5 free resume/cover letter generations this month. Upgrade to Pro for CAD $9.99/month to continue.',
-          count,
-        },
-        { status: 429 }
-      );
-    }
-
     const body = await request.json();
-    const { jobDescription, jobTitle, company, applyUrl, mode } = body || {};
+    const {
+      jobDescription,
+      jobTitle,
+      company,
+      applyUrl,
+      mode,
+      previousMatchScore,
+      profileAdditions,
+      resumeEnhancements,
+      resolvedSuggestions,
+      wovenEnhancements,
+      tailoredResume,
+    } = body || {};
 
-    const normalizedMode = mode === 'cover_letter' || mode === 'cover' ? 'cover_letter' : 'resume';
+    const normalizedMode =
+      mode === 'cover_letter' || mode === 'cover'
+        ? 'cover_letter'
+        : mode === 'match_only'
+          ? 'match_only'
+          : 'resume';
 
-    const normalizedProfile = await loadUserProfileForAi(supabase, user.id, user.email);
-    if (!normalizedProfile) {
+    const profileBundle = await loadUserProfileBundle(supabase, user.id, user.email);
+    if (!profileBundle) {
       return NextResponse.json(
         { error: 'Complete your profile before generating documents.' },
         { status: 400 }
       );
     }
+
+    const { flat: normalizedProfile, matchPayload: profileForAi } = profileBundle;
+
+    const addressedList = Array.isArray(resolvedSuggestions)
+      ? resolvedSuggestions.filter((s) => typeof s === 'string' && s.trim())
+      : [
+          ...(Array.isArray(profileAdditions) ? profileAdditions : []),
+          ...(Array.isArray(resumeEnhancements) ? resumeEnhancements : []),
+        ].filter((s) => typeof s === 'string' && s.trim());
+
+    const profileAdditionList = Array.isArray(profileAdditions)
+      ? profileAdditions.filter((s) => typeof s === 'string' && s.trim())
+      : [];
+
+    const resumeEnhancementList = Array.isArray(resumeEnhancements)
+      ? resumeEnhancements.filter((s) => typeof s === 'string' && s.trim())
+      : [];
+
+    const wovenEnhancementList = Array.isArray(wovenEnhancements)
+      ? wovenEnhancements.filter((s) => typeof s === 'string' && s.trim())
+      : [];
+
+    const tailoredResumeText =
+      typeof tailoredResume === 'string' && tailoredResume.trim()
+        ? tailoredResume.trim().slice(0, 12000)
+        : '';
+
+    const priorScore =
+      typeof previousMatchScore === 'number' && Number.isFinite(previousMatchScore)
+        ? Math.round(Math.max(0, Math.min(100, previousMatchScore)))
+        : null;
 
     if (!jobDescription || typeof jobDescription !== 'string' || !jobDescription.trim()) {
       return NextResponse.json(
@@ -87,22 +125,198 @@ export async function POST(request) {
       );
     }
 
-    const profileForAi = {
-      name: normalizedProfile.full_name || `${normalizedProfile.first_name || ''} ${normalizedProfile.last_name || ''}`.trim(),
-      email: normalizedProfile.email || '',
-      phone: normalizedProfile.phone || '',
-      summary: normalizedProfile.summary || '',
-      experience: String(normalizedProfile.experience || '').slice(0, 6000),
-      education: String(normalizedProfile.education || '').slice(0, 2000),
-      skills: String(normalizedProfile.skills || '').slice(0, 1500),
-      projects: String(normalizedProfile.projects || '').slice(0, 2000),
-      certifications: String(normalizedProfile.certifications || '').slice(0, 1500),
-    };
-
     const candidateName =
       normalizedProfile.full_name ||
       `${normalizedProfile.first_name} ${normalizedProfile.last_name}`.trim() ||
       'Candidate';
+
+    const MATCH_ANALYSIS_SYSTEM = `You are an expert ATS resume matcher. Return ONLY valid JSON:
+{"match_score":0,"match_reasons":[],"match_improvement_tips":[]}
+
+Rules:
+- When TAILORED RESUME is provided, score how well THAT resume fits the job (skills/experience/certs in the document count as matched).
+- Otherwise score how well the candidate PROFILE fits the job.
+- Skills and certifications listed in the profile or tailored resume count as present.
+- match_score: integer 0-100 for current fit.
+- match_reasons: 3-6 bullets on strengths and remaining gaps. Do not repeat ALREADY ADDRESSED or RECENTLY WOVEN items as gaps.
+- match_improvement_tips: only NEW actionable bullets for gaps still missing. Never repeat items in ALREADY ADDRESSED, RECENTLY WOVEN, or RECENTLY ADDED TO PROFILE.
+- Use ONLY facts from the profile/resume. Never invent credentials.`;
+
+    function buildMatchContextBlock(scoringResume = '') {
+      const resumeForScoring = scoringResume || tailoredResumeText;
+      const sections = [
+        `CANDIDATE PROFILE:\n${JSON.stringify(profileForAi)}`,
+      ];
+
+      if (profileAdditionList.length) {
+        sections.push(
+          `RECENTLY ADDED TO PROFILE (count as matched — do not re-suggest as gaps):\n${profileAdditionList.map((s) => `- ${s}`).join('\n')}`
+        );
+      }
+
+      if (resumeEnhancementList.length) {
+        sections.push(
+          `QUEUED FOR RESUME (will be woven into the tailored resume — do not penalize score or list as profile gaps):\n${resumeEnhancementList.map((s) => `- ${s}`).join('\n')}`
+        );
+      }
+
+      if (wovenEnhancementList.length) {
+        sections.push(
+          `RECENTLY WOVEN INTO RESUME (treat as addressed — do not list as gaps or repeat in tips):\n${wovenEnhancementList.map((s) => `- ${s}`).join('\n')}`
+        );
+      }
+
+      if (resumeForScoring) {
+        sections.push(
+          `TAILORED RESUME (primary source for match scoring — skills, experience, and certifications in this document count as matched):\n${resumeForScoring}`
+        );
+      }
+
+      if (addressedList.length) {
+        sections.push(
+          `ALREADY ADDRESSED BY USER (exclude from match_improvement_tips):\n${addressedList.map((s) => `- ${s}`).join('\n')}`
+        );
+      }
+
+      if (priorScore !== null) {
+        sections.push(
+          `PREVIOUS MATCH SCORE: ${priorScore}%. If RECENTLY ADDED TO PROFILE, RECENTLY WOVEN INTO RESUME, or TAILORED RESUME now covers prior gaps, the new score must be >= ${priorScore}. Never decrease the score after the user addressed recommendations.`
+        );
+      }
+
+      sections.push(
+        `TARGET JOB: ${jobTitle || 'Not specified'} at ${company || 'Not specified'}`,
+        `JOB DESCRIPTION:\n${cleanedJobDescription.slice(0, 8000)}`
+      );
+
+      return sections.join('\n\n');
+    }
+
+    const allAddressed = [
+      ...addressedList,
+      ...wovenEnhancementList,
+    ].filter((s, i, arr) => arr.findIndex((x) => x === s) === i);
+
+    function toMatchLineList(value) {
+      if (Array.isArray(value)) {
+        return value.map((line) => String(line || '').trim()).filter(Boolean);
+      }
+      if (typeof value === 'string' && value.trim()) {
+        return value
+          .split('\n')
+          .map((line) => line.replace(/^[-•\d.]+\s*/, '').trim())
+          .filter(Boolean);
+      }
+      return [];
+    }
+
+    function finalizeMatchAnalysis(rawScore, rawReasons, rawTips, wovenCount = 0) {
+      let matchScore =
+        Number.isInteger(rawScore) ? rawScore : typeof rawScore === 'number' ? Math.round(rawScore) : null;
+
+      const reasonList = toMatchLineList(rawReasons);
+      const tipList = toMatchLineList(rawTips);
+
+      const filtered = filterMatchAnalysis(reasonList, tipList, allAddressed);
+
+      matchScore = applyMatchScoreAdjustments(matchScore, {
+        priorScore,
+        profileAdditionCount: profileAdditionList.length,
+        wovenCount: wovenCount || wovenEnhancementList.length,
+        addressedCount: allAddressed.length,
+        remainingTips: filtered.tips.length,
+      });
+
+      return {
+        matchScore,
+        matchReasons: filtered.reasons.join('\n'),
+        matchImprovementTips: filtered.tips.join('\n'),
+      };
+    }
+
+    async function runMatchAnalysis(scoringResume = '') {
+      const matchPayload = await createClaudeJson({
+        system: MATCH_ANALYSIS_SYSTEM,
+        user: buildMatchContextBlock(scoringResume),
+        maxTokens: 1536,
+      });
+
+      return finalizeMatchAnalysis(
+        matchPayload?.match_score,
+        matchPayload?.match_reasons,
+        matchPayload?.match_improvement_tips,
+        wovenEnhancementList.length || resumeEnhancementList.length
+      );
+    }
+
+    if (normalizedMode !== 'match_only' && !isPro && count >= FREE_RESUME_LIMIT) {
+      return NextResponse.json(
+        {
+          error: 'FREE_LIMIT_REACHED',
+          message:
+            'You have used all 5 free resume/cover letter generations this month. Upgrade to Pro for CAD $9.99/month to continue.',
+          count,
+        },
+        { status: 429 }
+      );
+    }
+
+    if (normalizedMode === 'match_only') {
+      let matchScore = null;
+      let matchReasons = '';
+      let matchImprovementTips = '';
+
+      try {
+        const finalized = await runMatchAnalysis(tailoredResumeText);
+        matchScore = finalized.matchScore;
+        matchReasons = finalized.matchReasons;
+        matchImprovementTips = finalized.matchImprovementTips;
+      } catch (err) {
+        console.error('Match-only AI error:', err);
+        return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
+      }
+
+      const safeCompany = company || 'Unknown';
+      const safeTitle = jobTitle || 'Unknown';
+
+      const { data: existingRows } = await supabase
+        .from('applications')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('company', safeCompany)
+        .eq('job_title', safeTitle)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      const existing = existingRows?.[0];
+      if (existing?.id) {
+        await supabase
+          .from('applications')
+          .update({
+            match_score: matchScore,
+            job_description: cleanedJobDescription,
+          })
+          .eq('id', existing.id);
+      }
+
+      return NextResponse.json({
+        resume: '',
+        coverLetter: '',
+        matchScore,
+        matchReasons,
+        matchImprovementTips,
+        jobTitle: jobTitle || null,
+        company: company || null,
+        applyUrl: applyUrl || null,
+        mode: 'match_only',
+        applicationId: existing?.id || null,
+        usage: {
+          count,
+          limit: isPro ? 'unlimited' : FREE_RESUME_LIMIT,
+        },
+      });
+    }
+
 
     let resumeText = '';
     let coverLetter = '';
@@ -112,25 +326,34 @@ export async function POST(request) {
     let tailoredStructured = null;
 
     if (normalizedMode === 'resume') {
-      let tailoredStructured;
-      try {
-        tailoredStructured = await createClaudeJson({
-          system: `You are an expert ATS resume writer. Return ONLY valid JSON in this shape:
-{"name":"","contact":{"email":"","phone":"","address":"","linkedin":"","portfolio":""},"summary":"","skills":[],"experience":[{"title":"","company":"","years":"","bullets":[]}],"education":[{"degree":"","institution":"","year":""}],"certifications":[],"projects":[{"name":"","years":"","details":[]}],"match_score":0,"match_reasons":[],"match_improvement_tips":[]}
+      const resumeSystemPrompt = `You are an expert ATS resume writer. Return ONLY valid JSON in this shape:
+{"name":"","contact":{"email":"","phone":"","address":"","linkedin":"","portfolio":""},"summary":"","skills":[],"experience":[{"title":"","company":"","years":"","bullets":[]}],"education":[{"degree":"","institution":"","year":""}],"certifications":[],"projects":[{"name":"","years":"","details":[]}]}
 
 Rules:
 - Use ONLY the candidate's real background. Never invent employers, degrees, or dates.
 - Align summary, skills, and bullets to the job with natural ATS keywords.
 - Recent role: 5-7 bullets; prior roles: 4-5 bullets each. Action-oriented bullets only.
-- Include contact from profile. Realistic match_score. match_reasons and match_improvement_tips must be specific.`,
-          user: `PROFILE:
-${JSON.stringify(profileForAi)}
+- Include ALL experience, education, certifications, and projects from the profile — never omit sections.
+- Include contact from profile.`;
 
-JOB: ${jobTitle || 'Not specified'} at ${company || 'Not specified'}
+      const resumeUserPrompt = `${buildMatchContextBlock()}${
+        resumeEnhancementList.length
+          ? `\n\nRESUME ENHANCEMENTS TO WEAVE IN (emphasize in summary, skills, and relevant bullets using only truthful framing from the profile):\n${resumeEnhancementList.map((s) => `- ${s}`).join('\n')}`
+          : ''
+      }`;
 
-DESCRIPTION:
-${cleanedJobDescription.slice(0, 8000)}`,
-          maxTokens: 4096,
+      function resumeLooksComplete(text) {
+        const profileHasExperience = String(profileForAi.experience || '').trim().length > 20;
+        if (profileHasExperience && !text.includes('EXPERIENCE')) return false;
+        if (String(profileForAi.education || '').trim() && !text.includes('EDUCATION')) return false;
+        return text.length >= 400;
+      }
+
+      try {
+        tailoredStructured = await createClaudeJson({
+          system: resumeSystemPrompt,
+          user: resumeUserPrompt,
+          maxTokens: 8192,
         });
       } catch (err) {
         console.error('Tailor resume AI error:', err);
@@ -152,22 +375,48 @@ ${cleanedJobDescription.slice(0, 8000)}`,
       };
 
       resumeText = formatResumeAsText(tailoredStructured);
+
+      if (!resumeLooksComplete(resumeText)) {
+        console.warn('Tailored resume looked truncated — retrying generation once');
+        try {
+          const retryStructured = await createClaudeJson({
+            system: `${resumeSystemPrompt}\n- CRITICAL: You MUST include complete EXPERIENCE and EDUCATION sections. Do not stop early.`,
+            user: resumeUserPrompt,
+            maxTokens: 8192,
+          });
+          if (retryStructured && typeof retryStructured === 'object') {
+            retryStructured.name = retryStructured.name || candidateName;
+            retryStructured.contact = {
+              email: retryStructured?.contact?.email || normalizedProfile.email || '',
+              phone: retryStructured?.contact?.phone || normalizedProfile.phone || '',
+              address: retryStructured?.contact?.address || normalizedProfile.address || '',
+              linkedin: retryStructured?.contact?.linkedin || normalizedProfile.linkedin || '',
+              portfolio: retryStructured?.contact?.portfolio || normalizedProfile.portfolio || '',
+            };
+            const retryText = formatResumeAsText(retryStructured);
+            if (resumeLooksComplete(retryText) || retryText.length > resumeText.length) {
+              tailoredStructured = retryStructured;
+              resumeText = retryText;
+            }
+          }
+        } catch (retryErr) {
+          console.error('Tailor resume retry error:', retryErr);
+        }
+      }
       if (!resumeText.trim()) {
         console.error('Tailor resume AI error: formatted resume was empty');
         return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
       }
 
-      matchScore = Number.isInteger(tailoredStructured?.match_score)
-        ? tailoredStructured.match_score
-        : null;
-
-      matchReasons = Array.isArray(tailoredStructured?.match_reasons)
-        ? tailoredStructured.match_reasons.join('\n')
-        : '';
-
-      matchImprovementTips = Array.isArray(tailoredStructured?.match_improvement_tips)
-        ? tailoredStructured.match_improvement_tips.join('\n')
-        : '';
+      try {
+        const finalized = await runMatchAnalysis(resumeText);
+        matchScore = finalized.matchScore;
+        matchReasons = finalized.matchReasons;
+        matchImprovementTips = finalized.matchImprovementTips;
+      } catch (err) {
+        console.error('Match analysis after resume tailor error:', err);
+        return NextResponse.json({ error: getUserFacingAiError() }, { status: 500 });
+      }
     }
 
     if (normalizedMode === 'cover_letter') {

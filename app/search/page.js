@@ -13,13 +13,36 @@ import { fetchMonthlyResumeUsage, FREE_RESUME_LIMIT } from '@/lib/usage';
 import {
   profileRowToStructured,
   structuredToDbPayload,
-  addPendingSuggestion,
   addSkillToProfile,
   addCertificationToProfile,
   classifyMatchSuggestion,
   extractItemLabel,
   suggestionSupportsHaveThis,
+  filterAddressedSuggestions,
 } from '@/lib/profile-data';
+import {
+  applyMatchScoreAdjustments,
+  filterMatchAnalysis,
+  isLikelyStrengthReason,
+  isSuggestionAddressed,
+} from '@/lib/match-scoring';
+
+function parseMatchTextField(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((line) => String(line || '').replace(/^[-•\d.]+\s*/, '').trim())
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(value || '');
+}
+
+function splitMatchLines(value) {
+  return parseMatchTextField(value)
+    .split('\n')
+    .map((line) => line.replace(/^[-•\d.]+\s*/, '').trim())
+    .filter(Boolean);
+}
 
 export default function SearchPage() {
   return (
@@ -92,10 +115,12 @@ function SearchPageContent() {
   const [isExporting, setIsExporting] = useState(false);
 
   const [matchToast, setMatchToast] = useState('');
-  const [pendingAdded, setPendingAdded] = useState(new Set());
+  const [addressedSuggestions, setAddressedSuggestions] = useState(new Set());
+  const [resumeEnhancements, setResumeEnhancements] = useState(new Set());
+  const [profileAdditions, setProfileAdditions] = useState(new Set());
   const [matchEditor, setMatchEditor] = useState(null);
   const [matchEditorSaving, setMatchEditorSaving] = useState(false);
-  const [profileActionLoading, setProfileActionLoading] = useState('');
+  const [isRematching, setIsRematching] = useState(false);
 
   const hasReachedFreeLimit = !usage.isPro && usage.used >= FREE_LIMIT;
 
@@ -154,12 +179,6 @@ function SearchPageContent() {
       window.removeEventListener('pageshow', handlePageShow);
     };
   }, [supabase]);
-
-  useEffect(() => {
-    if (!profile) return;
-    const structured = profileRowToStructured(profile, profile.email || '');
-    setPendingAdded(new Set(structured.pendingItems.map((item) => item.text)));
-  }, [profile]);
 
   useEffect(() => {
     if (!isTailoring) {
@@ -497,11 +516,16 @@ function SearchPageContent() {
 
       if (!isSameContext) {
         setTailorResult(null);
+        setAddressedSuggestions(new Set());
+        setResumeEnhancements(new Set());
+        setProfileAdditions(new Set());
       }
 
       if (!profile) {
         throw new Error('Your saved profile is missing. Complete your profile on the Profile page first.');
       }
+
+      const wovenThisRun = mode === 'resume' ? [...resumeEnhancements] : [];
 
       const res = await fetch('/api/tailor-resume', {
         method: 'POST',
@@ -516,6 +540,12 @@ function SearchPageContent() {
           company: comp.slice(0, 200),
           applyUrl: finalApplyUrl.slice(0, 500),
           mode,
+          resumeEnhancements: [...resumeEnhancements],
+          profileAdditions: [...profileAdditions],
+          resolvedSuggestions: [...addressedSuggestions],
+          wovenEnhancements: wovenThisRun,
+          tailoredResume: isSameContext ? tailorResult?.resume || '' : '',
+          previousMatchScore: isSameContext ? tailorResult?.matchScore ?? null : null,
         }),
       });
 
@@ -528,6 +558,22 @@ function SearchPageContent() {
       }
 
       const resolvedApplyUrl = json.applyUrl || finalApplyUrl || '';
+      const priorScore = isSameContext ? tailorResult?.matchScore ?? null : null;
+      const filteredAnalysis = filterMatchAnalysis(
+        splitMatchLines(json.matchReasons),
+        splitMatchLines(json.matchImprovementTips),
+        [...addressedSuggestions, ...wovenThisRun]
+      );
+      const adjustedScore =
+        mode === 'resume'
+          ? applyMatchScoreAdjustments(json.matchScore ?? null, {
+              priorScore,
+              profileAdditionCount: profileAdditions.size,
+              wovenCount: wovenThisRun.length,
+              addressedCount: addressedSuggestions.size + wovenThisRun.length,
+              remainingTips: filteredAnalysis.tips.length,
+            })
+          : json.matchScore ?? null;
 
       setTailorResult((prev) => {
         const base = isSameContext ? prev || {} : {};
@@ -538,12 +584,14 @@ function SearchPageContent() {
             ...json,
             resume: json.resume || '',
             coverLetter: base.coverLetter || '',
-            matchScore: json.matchScore ?? base.matchScore ?? null,
-            matchReasons: json.matchReasons || base.matchReasons || '',
-            matchImprovementTips: json.matchImprovementTips || base.matchImprovementTips || '',
+            matchScore: adjustedScore ?? json.matchScore ?? base.matchScore ?? null,
+            matchReasons: filteredAnalysis.reasons.join('\n') || parseMatchTextField(json.matchReasons) || base.matchReasons || '',
+            matchImprovementTips:
+              filteredAnalysis.tips.join('\n') || parseMatchTextField(json.matchImprovementTips) || base.matchImprovementTips || '',
             applyUrl: resolvedApplyUrl || base.applyUrl || '',
             jobTitle: json.jobTitle || base.jobTitle || title,
             company: json.company || base.company || comp,
+            storedJobDescription: jd,
           };
         }
 
@@ -558,10 +606,20 @@ function SearchPageContent() {
           applyUrl: resolvedApplyUrl || base.applyUrl || '',
           jobTitle: json.jobTitle || base.jobTitle || title,
           company: json.company || base.company || comp,
+          storedJobDescription: base.storedJobDescription || jd,
         };
       });
 
       setActiveResultTab(mode === 'resume' ? 'resume' : 'cover');
+
+      if (mode === 'resume' && wovenThisRun.length) {
+        setAddressedSuggestions((prev) => {
+          const next = new Set(prev);
+          wovenThisRun.forEach((item) => next.add(item));
+          return next;
+        });
+        setResumeEnhancements(new Set());
+      }
 
       await upsertApplication({
         status: 'Ready',
@@ -691,16 +749,30 @@ function SearchPageContent() {
   const resultApplyUrl = tailorResult?.applyUrl || currentApplyUrl || '';
   const showMatchScore =
     tailorResult?.matchScore !== undefined && tailorResult?.matchScore !== null;
+  const addressedList = [...addressedSuggestions];
+  const showMatchTab = !!tailorResult?.resume;
 
-  const matchReasonsList = (tailorResult?.matchReasons || '')
-    .split('\n')
-    .map((line) => line.replace(/^[-•\d.]+\s*/, '').trim())
-    .filter(Boolean);
+  const matchReasonsList = filterAddressedSuggestions(
+    splitMatchLines(tailorResult?.matchReasons),
+    addressedList
+  );
 
-  const matchTipsList = (tailorResult?.matchImprovementTips || '')
-    .split('\n')
-    .map((line) => line.replace(/^[-•\d.]+\s*/, '').trim())
-    .filter(Boolean);
+  const matchTipsList = filterAddressedSuggestions(
+    splitMatchLines(tailorResult?.matchImprovementTips),
+    addressedList
+  );
+
+  const effectiveMatchScore =
+    applyMatchScoreAdjustments(tailorResult?.matchScore ?? null, {
+      priorScore: tailorResult?.matchScore ?? null,
+      profileAdditionCount: profileAdditions.size,
+      wovenCount: 0,
+      addressedCount: addressedSuggestions.size,
+      remainingTips: matchTipsList.length,
+    }) ?? tailorResult?.matchScore ?? null;
+
+  const allRecommendationsAddressed =
+    addressedSuggestions.size > 0 && matchTipsList.length === 0;
 
   const currentResultText =
     activeResultTab === 'resume'
@@ -710,7 +782,7 @@ function SearchPageContent() {
       : [
           matchReasonsList.length ? `WHY THIS SCORE:\n${matchReasonsList.map((l) => `- ${l}`).join('\n')}` : '',
           matchTipsList.length
-            ? `HOW TO REACH 85%+ MATCH:\n${matchTipsList.map((l) => `- ${l}`).join('\n')}`
+            ? `HOW TO REACH 90%+ MATCH:\n${matchTipsList.map((l) => `- ${l}`).join('\n')}`
             : '',
         ]
           .filter(Boolean)
@@ -739,6 +811,17 @@ function SearchPageContent() {
     };
   }
 
+  function getCurrentJobDescription() {
+    return (
+      tailorResult?.storedJobDescription ||
+      jobDetails?.description ||
+      selectedJob?.description ||
+      selectedJob?.descriptionPreview ||
+      jobDescription ||
+      ''
+    );
+  }
+
   function showMatchToast(message) {
     setMatchToast(message);
     window.setTimeout(() => setMatchToast(''), 3200);
@@ -757,20 +840,10 @@ function SearchPageContent() {
     await reloadProfileRow();
   }
 
-  async function handleAddSuggestionPending(text) {
-    if (!userId || !profile) return;
-    setProfileActionLoading(text);
-    try {
-      const structured = profileRowToStructured(profile, profile.email || '');
-      const updated = addPendingSuggestion(structured, text, getJobMeta());
-      await persistStructured(updated);
-      setPendingAdded((prev) => new Set(prev).add(text));
-      showMatchToast('Added to your profile as pending.');
-    } catch (err) {
-      showMatchToast(err?.message || 'Could not save to profile.');
-    } finally {
-      setProfileActionLoading('');
-    }
+  function handleAddToResume(text) {
+    setResumeEnhancements((prev) => new Set(prev).add(text));
+    setAddressedSuggestions((prev) => new Set(prev).add(text));
+    showMatchToast('Queued for resume — tailor again to weave this in.');
   }
 
   function openHaveThisEditor(text) {
@@ -794,7 +867,8 @@ function SearchPageContent() {
         structured = addCertificationToProfile(structured, matchEditor.label, matchEditor.issuer);
       }
       await persistStructured(structured);
-      setPendingAdded((prev) => new Set(prev).add(matchEditor.text));
+      setProfileAdditions((prev) => new Set(prev).add(matchEditor.text));
+      setAddressedSuggestions((prev) => new Set(prev).add(matchEditor.text));
       setMatchEditor(null);
       showMatchToast('Added to your profile.');
     } catch (err) {
@@ -804,35 +878,123 @@ function SearchPageContent() {
     }
   }
 
-  function renderMatchSuggestion(text, keyPrefix, index) {
+  async function handleRematchAnalysis() {
+    if (!userId || !tailorResult) return;
+
+    const jd = getCurrentJobDescription().trim();
+    if (!jd) {
+      showMatchToast('Job description is missing — re-select the job or paste it again.');
+      return;
+    }
+
+    const meta = getJobMeta();
+    setIsRematching(true);
+    setTailorError('');
+
+    try {
+      await reloadProfileRow();
+
+      const res = await fetch('/api/tailor-resume', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          jobDescription: sanitizeJobDescription(jd),
+          jobTitle: meta.jobTitle.slice(0, 300),
+          company: meta.company.slice(0, 200),
+          applyUrl: (tailorResult.applyUrl || resultApplyUrl || '').slice(0, 500),
+          mode: 'match_only',
+          previousMatchScore: tailorResult.matchScore ?? null,
+          profileAdditions: [...profileAdditions],
+          resumeEnhancements: [...resumeEnhancements],
+          resolvedSuggestions: [...addressedSuggestions],
+          tailoredResume: tailorResult.resume || '',
+        }),
+      });
+
+      const { json, text } = await readApiJson(res);
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(res, json, text));
+      }
+
+      const filtered = filterMatchAnalysis(
+        splitMatchLines(json.matchReasons),
+        splitMatchLines(json.matchImprovementTips),
+        [...addressedSuggestions]
+      );
+
+      const adjustedScore = applyMatchScoreAdjustments(json.matchScore ?? null, {
+        priorScore: tailorResult.matchScore ?? null,
+        profileAdditionCount: profileAdditions.size,
+        wovenCount: 0,
+        addressedCount: addressedSuggestions.size,
+        remainingTips: filtered.tips.length,
+      });
+
+      setTailorResult((prev) => ({
+        ...prev,
+        matchScore: adjustedScore ?? json.matchScore ?? prev?.matchScore ?? null,
+        matchReasons: filtered.reasons.join('\n') || parseMatchTextField(json.matchReasons) || '',
+        matchImprovementTips: filtered.tips.join('\n') || parseMatchTextField(json.matchImprovementTips) || '',
+        storedJobDescription: jd,
+      }));
+
+      setMatchEditor(null);
+      setActiveResultTab('match');
+      showMatchToast('Match score updated with your latest profile.');
+    } catch (err) {
+      showMatchToast(err?.message || 'Could not recalculate match score.');
+    } finally {
+      setIsRematching(false);
+    }
+  }
+
+  function renderMatchSuggestion(text, keyPrefix, index, listContext = 'tip') {
     const type = classifyMatchSuggestion(text);
     const supportsHaveThis = suggestionSupportsHaveThis(type);
-    const isAdded = pendingAdded.has(text);
-    const loadingThis = profileActionLoading === text;
+    const addressed = [...addressedSuggestions];
+    const isAddressed = isSuggestionAddressed(text, addressed);
+    const isInProfile = profileAdditions.has(text) || isSuggestionAddressed(text, [...profileAdditions]);
+    const isResumeQueued = resumeEnhancements.has(text);
+    const isWoven = isAddressed && !isInProfile && !isResumeQueued;
+    const showActions = listContext === 'tip' || !isLikelyStrengthReason(text);
 
     return (
       <li key={`${keyPrefix}-${index}`} className="match-list-item">
         <div className="match-list-text">{text}</div>
-        <div className="match-list-actions">
-          {supportsHaveThis && (
-            <button
-              type="button"
-              className="match-action-btn match-have-btn"
-              onClick={() => openHaveThisEditor(text)}
-              disabled={!!profileActionLoading || matchEditorSaving}
-            >
-              Do you have this?
-            </button>
-          )}
-          <button
-            type="button"
-            className="match-action-btn match-add-btn"
-            onClick={() => handleAddSuggestionPending(text)}
-            disabled={isAdded || !!profileActionLoading || matchEditorSaving}
-          >
-            {loadingThis ? 'Saving...' : isAdded ? 'Added ✓' : 'Add to profile'}
-          </button>
-        </div>
+        {showActions && (
+          <div className="match-list-actions">
+            {isInProfile ? (
+              <span className="match-status-chip match-status-profile">In profile ✓</span>
+            ) : isWoven ? (
+              <span className="match-status-chip match-status-resume">In resume ✓</span>
+            ) : (
+              <>
+                {supportsHaveThis && (
+                  <button
+                    type="button"
+                    className="match-action-btn match-have-btn"
+                    onClick={() => openHaveThisEditor(text)}
+                    disabled={matchEditorSaving || isAddressed}
+                  >
+                    Do you have this?
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="match-action-btn match-add-btn"
+                  onClick={() => handleAddToResume(text)}
+                  disabled={isResumeQueued || isAddressed || matchEditorSaving}
+                >
+                  {isResumeQueued ? 'Queued for resume ✓' : 'Add to Resume'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </li>
     );
   }
@@ -1256,7 +1418,7 @@ function SearchPageContent() {
           color: #334155;
           line-height: 1.8;
           white-space: pre-wrap;
-          max-height: 480px;
+          max-height: min(72vh, 720px);
           overflow-y: auto;
           font-family: 'Courier New', monospace;
         }
@@ -1401,6 +1563,66 @@ function SearchPageContent() {
         }
         .match-have-btn:hover:not(:disabled) { background: rgba(5,150,105,0.14); }
         .match-action-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+        .match-status-chip {
+          display: inline-flex;
+          align-items: center;
+          padding: 8px 12px;
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .match-status-profile {
+          border: 1px solid rgba(5,150,105,0.25);
+          background: rgba(5,150,105,0.08);
+          color: #059669;
+        }
+        .match-status-resume {
+          border: 1px solid rgba(37,99,235,0.25);
+          background: rgba(37,99,235,0.08);
+          color: #2563eb;
+        }
+        .match-resume-queue-banner {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 12px 16px;
+          border-radius: 12px;
+          background: rgba(37,99,235,0.08);
+          border: 1px solid rgba(37,99,235,0.2);
+          font-size: 13px;
+          color: #1d4ed8;
+          line-height: 1.5;
+        }
+        .match-complete-banner {
+          padding: 12px 16px;
+          border-radius: 12px;
+          background: rgba(5,150,105,0.08);
+          border: 1px solid rgba(5,150,105,0.22);
+          font-size: 13px;
+          color: #047857;
+          line-height: 1.5;
+        }
+        .match-resume-queue-btn {
+          flex-shrink: 0;
+          padding: 8px 16px;
+          border-radius: 8px;
+          border: none;
+          background: #2563eb;
+          color: #fff;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+        .match-resume-queue-btn:hover:not(:disabled) {
+          background: #1d4ed8;
+        }
+        .match-resume-queue-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
         .match-inline-editor {
           margin-top: 14px;
           padding: 16px;
@@ -1451,6 +1673,35 @@ function SearchPageContent() {
           font-size: 13px;
           font-weight: 600;
           box-shadow: 0 16px 40px rgba(15,23,42,0.22);
+        }
+        .match-recalc-wrap {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          margin-top: 4px;
+        }
+        .match-recalc-btn {
+          align-self: flex-start;
+          border: 1px solid rgba(37,99,235,0.28);
+          background: linear-gradient(135deg, rgba(37,99,235,0.12), rgba(124,58,237,0.08));
+          color: #1d4ed8;
+          border-radius: 10px;
+          padding: 10px 16px;
+          font-size: 13px;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .match-recalc-btn:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 24px rgba(37,99,235,0.18);
+        }
+        .match-recalc-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .match-recalc-hint {
+          font-size: 12px;
+          color: #64748b;
+          line-height: 1.5;
         }
         .match-list li {
           font-size: 13.5px;
@@ -2036,7 +2287,7 @@ function SearchPageContent() {
                           display: 'inline-block',
                         }}
                       />
-                      {tailorResult.matchScore}% match
+                      {effectiveMatchScore}% match
                     </div>
                   )}
                 </div>
@@ -2060,7 +2311,7 @@ function SearchPageContent() {
                     </button>
                   )}
 
-                  {!!tailorResult.matchReasons && (
+                  {showMatchTab && (
                     <button
                       className={`result-tab ${activeResultTab === 'match' ? 'active' : ''}`}
                       onClick={() => setActiveResultTab('match')}
@@ -2096,15 +2347,49 @@ function SearchPageContent() {
                   <div className="match-analysis">
                     {showMatchScore && (
                       <div className="match-score-banner">
-                        <div className="match-score-value">{tailorResult.matchScore}%</div>
+                        <div className="match-score-value">{effectiveMatchScore}%</div>
                         <div className="match-score-copy">
                           <div className="match-score-label">Current match score</div>
                           <div className="match-score-hint">
-                            {tailorResult.matchScore >= 85
+                            {allRecommendationsAddressed
+                              ? "You've addressed all current recommendations — strong match for this role."
+                              : effectiveMatchScore >= 90
                               ? "You're in great shape for this role."
-                              : 'Aim for 85%+ by acting on the tips below.'}
+                              : 'Aim for 90%+ by acting on the tips below.'}
+                          </div>
+                          <div className="match-recalc-wrap">
+                            <button
+                              type="button"
+                              className="match-recalc-btn"
+                              onClick={handleRematchAnalysis}
+                              disabled={isRematching || isTailoring || matchEditorSaving}
+                            >
+                              {isRematching ? 'Recalculating match score...' : 'Recalculate match score'}
+                            </button>
+                            <p className="match-recalc-hint">
+                              Added skills or certs via &quot;Do you have this?&quot;? Recalculate to refresh your score. Use &quot;Add to Resume&quot; for wording changes, then tailor again.
+                            </p>
                           </div>
                         </div>
+                      </div>
+                    )}
+
+                    {resumeEnhancements.size > 0 && (
+                      <div className="match-resume-queue-banner">
+                        <span>
+                          {resumeEnhancements.size} item{resumeEnhancements.size === 1 ? '' : 's'} queued for your resume.
+                          Tailor your resume again to weave them in.
+                        </span>
+                        <button
+                          type="button"
+                          className="match-resume-queue-btn"
+                          onClick={() => handleTailor(tailorSource, 'resume')}
+                          disabled={isTailoring || hasReachedFreeLimit}
+                        >
+                          {isTailoring && tailorAction === 'resume'
+                            ? 'Tailoring resume...'
+                            : 'Tailor resume again'}
+                        </button>
                       </div>
                     )}
 
@@ -2112,14 +2397,20 @@ function SearchPageContent() {
                       <div className="match-section">
                         <div className="match-section-title">Why this score</div>
                         <ul className="match-list">
-                          {matchReasonsList.map((line, i) => renderMatchSuggestion(line, 'reason', i))}
+                          {matchReasonsList.map((line, i) => renderMatchSuggestion(line, 'reason', i, 'reason'))}
                         </ul>
+                      </div>
+                    )}
+
+                    {allRecommendationsAddressed && (
+                      <div className="match-complete-banner">
+                        All recommendations for this job have been added to your profile or resume. Your match score has been updated to reflect that.
                       </div>
                     )}
 
                     {matchTipsList.length > 0 && (
                       <div className="match-section match-section-tips">
-                        <div className="match-section-title">🚀 How to reach 85%+ match</div>
+                        <div className="match-section-title">🚀 How to reach 90%+ match</div>
                         <ul className="match-list">
                           {matchTipsList.map((line, i) => renderMatchSuggestion(line, 'tip', i))}
                         </ul>

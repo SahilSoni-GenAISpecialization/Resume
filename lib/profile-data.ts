@@ -208,6 +208,94 @@ export function suggestionSupportsHaveThis(type: PendingProfileItem['type']): bo
   return type === 'skill' || type === 'certification' || type === 'license';
 }
 
+/** Normalize suggestion text for overlap checks (recalc deduping). */
+export function normalizeSuggestionKey(text: string): string {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/^[-•\d.]+\s*/, '')
+    .replace(/[^\w\s+#./-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const SUGGESTION_STOP_WORDS = new Set([
+  'the', 'a', 'an', 'to', 'your', 'profile', 'resume', 'add', 'highlight', 'mention',
+  'experience', 'with', 'and', 'or', 'for', 'in', 'on', 'of', 'that', 'this', 'from',
+  'into', 'using', 'about', 'more', 'any', 'all', 'job', 'role', 'skills', 'skill',
+]);
+
+function extractSignificantTokens(text: string): string[] {
+  return normalizeSuggestionKey(text)
+    .split(' ')
+    .filter((w) => w.length > 2 && !SUGGESTION_STOP_WORDS.has(w));
+}
+
+/** True when two suggestion strings refer to the same gap (fuzzy). */
+export function suggestionsOverlap(a: string, b: string): boolean {
+  const na = normalizeSuggestionKey(a);
+  const nb = normalizeSuggestionKey(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+
+  const labelA = normalizeSuggestionKey(extractItemLabel(a, classifyMatchSuggestion(a)));
+  const labelB = normalizeSuggestionKey(extractItemLabel(b, classifyMatchSuggestion(b)));
+  if (labelA && labelB && (labelA === labelB || na.includes(labelB) || nb.includes(labelA))) {
+    return true;
+  }
+
+  const tokensA = extractSignificantTokens(a);
+  const tokensB = extractSignificantTokens(b);
+  if (tokensA.length && tokensB.length) {
+    const shared = tokensA.filter((token) =>
+      tokensB.some((other) => other === token || other.includes(token) || token.includes(other))
+    );
+    const threshold = Math.min(2, Math.min(tokensA.length, tokensB.length));
+    if (shared.length >= threshold) return true;
+  }
+
+  return false;
+}
+
+export function filterAddressedSuggestions(
+  suggestions: string[],
+  addressed: string[]
+): string[] {
+  if (!addressed?.length) return suggestions;
+  return suggestions.filter(
+    (tip) => !addressed.some((resolved) => suggestionsOverlap(tip, resolved))
+  );
+}
+
+export function formatPendingItemsForMatch(pendingItems: PendingProfileItem[]): string {
+  const pending = (pendingItems || []).filter((p) => p.status === 'pending');
+  if (!pending.length) return '';
+  return pending
+    .map((p) => `- [${p.type}] ${extractItemLabel(p.text, p.type)}`)
+    .join('\n');
+}
+
+/** Profile fields sent to match/tailor AI, including planned additions from pending items. */
+export function buildMatchProfilePayload(profileRow: Record<string, unknown>) {
+  const structured = profileRowToStructured(profileRow, String(profileRow.email || ''));
+  const flat = flattenProfileForAi(profileRow) as Record<string, unknown>;
+
+  return {
+    name:
+      String(flat.full_name || '').trim() ||
+      `${String(flat.first_name || '').trim()} ${String(flat.last_name || '').trim()}`.trim(),
+    email: String(flat.email || ''),
+    phone: String(flat.phone || ''),
+    summary: String(flat.summary || ''),
+    experience: String(flat.experience || '').slice(0, 6000),
+    education: String(flat.education || '').slice(0, 2000),
+    skills: String(flat.skills || '').slice(0, 1500),
+    projects: String(flat.projects || '').slice(0, 2000),
+    certifications: String(flat.certifications || '').slice(0, 1500),
+    planned_profile_additions: formatPendingItemsForMatch(structured.pendingItems),
+  };
+}
+
 export function addPendingSuggestion(
   profile: StructuredProfile,
   text: string,
