@@ -15,7 +15,13 @@ import FAQ from './FAQ';
 import Footer from './Footer';
 
 export default function LandingPage() {
-  const scrollTo = (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  const scrollTo = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const navOffset = 88;
+    const top = el.getBoundingClientRect().top + window.scrollY - navOffset;
+    window.scrollTo({ top, behavior: 'smooth' });
+  };
 
   return (
     <div className="landing">
