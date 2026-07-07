@@ -32,4 +32,16 @@ else
   exit 1
 fi
 
+echo "==> CDN / homepage check (purge Hostinger CDN if apex still shows stale cache)..."
+APEX_CACHE="$(curl -sI https://applymatic.ca/ | tr -d '\r' | grep -i '^cache-control:' || true)"
+WWW_CACHE="$(curl -sI https://www.applymatic.ca/ | tr -d '\r' | grep -i '^cache-control:' || true)"
+echo "applymatic.ca:    ${APEX_CACHE:-no cache-control header}"
+echo "www.applymatic.ca: ${WWW_CACHE:-no cache-control header}"
+if echo "$APEX_CACHE" | grep -qi 's-maxage=31536000'; then
+  echo ""
+  echo "WARN — Hostinger CDN is still serving a STALE cached homepage for applymatic.ca."
+  echo "       hPanel → CDN → Purge All Cache, and disable HTML caching for /"
+  echo "       Until then, https://www.applymatic.ca/ should work."
+fi
+
 echo "Deploy finished."

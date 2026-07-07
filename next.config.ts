@@ -12,6 +12,16 @@ const noStoreHeaders = [
 const nextConfig: NextConfig = {
   serverExternalPackages: ['pdf-parse'],
   output: 'standalone',
+  async redirects() {
+    return [
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'applymatic.ca' }],
+        destination: 'https://www.applymatic.ca/:path*',
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

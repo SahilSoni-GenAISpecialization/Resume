@@ -36,10 +36,27 @@ function pathNeedsNoCache(pathname) {
   );
 }
 
+function getRequestHost(request) {
+  const raw = request.headers.get('x-forwarded-host') || request.headers.get('host') || '';
+  return raw.split(',')[0].trim().split(':')[0].toLowerCase();
+}
+
 export async function middleware(request) {
   let supabaseResponse = NextResponse.next({ request });
   const siteUrl = getSiteUrl(request);
   const { pathname } = request.nextUrl;
+
+  // Hostinger CDN poisoned the apex homepage cache (stale HTML + 404 CSS chunks).
+  // www bypasses that cache entry; redirect apex visitors to www.
+  const host = getRequestHost(request);
+  if (host === 'applymatic.ca') {
+    const url = request.nextUrl.clone();
+    url.protocol = 'https:';
+    url.host = 'www.applymatic.ca';
+    const redirect = NextResponse.redirect(url, 308);
+    applyNoCacheHeaders(redirect);
+    return redirect;
+  }
 
   // Hostinger CDN can serve broken RSC payloads for `/app` — always use `/profile`.
   if (pathname === '/app' || pathname.startsWith('/app/')) {
