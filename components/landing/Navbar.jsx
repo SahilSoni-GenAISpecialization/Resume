@@ -46,7 +46,7 @@ export default function Navbar({ scrollTo }) {
     <>
       <motion.nav
         className={`lp-nav ${scrolled ? 'scrolled' : ''}`}
-        initial={{ y: -60, opacity: 0 }}
+        initial={false}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       >
