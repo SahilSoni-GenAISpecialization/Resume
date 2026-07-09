@@ -380,8 +380,13 @@ function SearchPageContent() {
 
     setSearchPage(page);
     setHasMoreJobs(hasMore);
+    const metaMessage = json.meta?.message || '';
+    const showBackupNotice =
+      json.meta?.fallbackUsed && json.meta?.provider === 'freehire';
     setSearchInfo(
-      !append && json.meta?.fallbackUsed && json.meta?.message ? json.meta.message : ''
+      !append && metaMessage && (showBackupNotice || !json.meta?.fallbackUsed)
+        ? metaMessage
+        : ''
     );
 
     return json;

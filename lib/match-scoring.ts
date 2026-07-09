@@ -39,6 +39,15 @@ export function filterMatchAnalysis(
   };
 }
 
+/** Deterministic 89–95% completion score so results vary by context without UI flicker. */
+function computeCompletionScore(ctx: MatchScoreContext): number {
+  const addressed = ctx.addressedCount ?? 0;
+  const woven = ctx.wovenCount ?? 0;
+  const prior = ctx.priorScore ?? 50;
+  const seed = (addressed * 17 + woven * 31 + prior * 13 + 7) % 7;
+  return 89 + seed;
+}
+
 /** Keep score from dropping after profile/resume improvements; boost when gaps are addressed. */
 export function applyMatchScoreAdjustments(
   rawScore: number | null,
@@ -68,8 +77,9 @@ export function applyMatchScoreAdjustments(
   const tipsLeft = remainingTips ?? null;
 
   if (tipsLeft === 0 && (addressed > 0 || wovenCount > 0)) {
-    const completionFloor = Math.max(91, priorScore ?? score);
-    score = Math.max(score, completionFloor);
+    const completionScore = computeCompletionScore(ctx);
+    score = Math.max(score, completionScore, priorScore ?? 0);
+    score = Math.min(95, score);
   }
 
   return Math.min(100, score);

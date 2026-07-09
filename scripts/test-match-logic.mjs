@@ -109,25 +109,52 @@ assert(
 );
 
 assert(
-  'no remaining tips after addressing bumps score above 90%',
-  applyMatchScoreAdjustments(57, {
-    priorScore: 57,
-    profileAdditionCount: 0,
-    wovenCount: 0,
-    addressedCount: 12,
-    remainingTips: 0,
-  }) >= 91
+  'no remaining tips after addressing lands in 89-95% range',
+  (() => {
+    const score = applyMatchScoreAdjustments(57, {
+      priorScore: 57,
+      profileAdditionCount: 0,
+      wovenCount: 0,
+      addressedCount: 12,
+      remainingTips: 0,
+    });
+    return score !== null && score >= 89 && score <= 95;
+  })()
 );
 
 assert(
-  'prior 85% completion score rises above 90%',
-  applyMatchScoreAdjustments(85, {
-    priorScore: 85,
-    profileAdditionCount: 0,
-    wovenCount: 0,
-    addressedCount: 8,
-    remainingTips: 0,
-  }) >= 91
+  'prior 85% completion score rises into 89-95% range',
+  (() => {
+    const score = applyMatchScoreAdjustments(85, {
+      priorScore: 85,
+      profileAdditionCount: 0,
+      wovenCount: 0,
+      addressedCount: 8,
+      remainingTips: 0,
+    });
+    return score !== null && score >= 89 && score <= 95;
+  })()
+);
+
+assert(
+  'completion scores vary across different addressed counts',
+  (() => {
+    const a = applyMatchScoreAdjustments(60, {
+      priorScore: 60,
+      profileAdditionCount: 0,
+      wovenCount: 0,
+      addressedCount: 3,
+      remainingTips: 0,
+    });
+    const b = applyMatchScoreAdjustments(60, {
+      priorScore: 60,
+      profileAdditionCount: 0,
+      wovenCount: 0,
+      addressedCount: 9,
+      remainingTips: 0,
+    });
+    return a !== null && b !== null && a !== b;
+  })()
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

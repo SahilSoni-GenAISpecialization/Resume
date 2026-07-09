@@ -154,16 +154,17 @@ Ensure billing is enabled and you have sufficient quota for production traffic.
 
 ---
 
-### 7. Job search (JSearch + Freehire fallback)
+### 7. Job search (dual JSearch + Freehire fallback)
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `JSEARCH_API_KEY` | Yes (for primary) | RapidAPI JSearch — upgrade plan before launch |
-| `FREEHIRE_API_BASE` | No | Defaults to `https://freehire.dev/api/v1` backup when JSearch quota is hit |
+| `JSEARCH_API_KEY` | Yes (primary) | RapidAPI JSearch key #1 |
+| `JSEARCH_API_KEY_2` | No | RapidAPI JSearch key #2 — used when key #1 quota is exhausted |
+| `FREEHIRE_API_BASE` | No | Defaults to `https://freehire.dev/api/v1` backup when both JSearch keys are exhausted |
 
-Applymatic tries **JSearch first**, then automatically falls back to **Freehire** when the monthly RapidAPI quota is exhausted (testing) or the key is missing. Job IDs are prefixed (`jsearch:…` / `freehire:…`) so details load from the correct provider.
+Applymatic tries **JSearch key #1**, then **JSearch key #2**, then automatically falls back to **Freehire** when both keys are exhausted or missing. Job IDs are prefixed (`jsearch:…` / `freehire:…`) so details load from the correct provider.
 
-After upgrading JSearch, no code changes are needed — remove the quota limit and JSearch will be used again automatically.
+After upgrading JSearch to a paid plan, no code changes are needed — JSearch will be used again automatically.
 
 ---
 
@@ -239,6 +240,7 @@ STRIPE_SECRET_KEY=sk_live_...
 STRIPE_PRICE_ID=price_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 JSEARCH_API_KEY=...
+JSEARCH_API_KEY_2=...
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_SECURE=false
