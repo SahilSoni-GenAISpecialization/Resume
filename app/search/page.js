@@ -380,14 +380,17 @@ function SearchPageContent() {
 
     setSearchPage(page);
     setHasMoreJobs(hasMore);
-    const metaMessage = json.meta?.message || '';
-    const showBackupNotice =
-      json.meta?.fallbackUsed && json.meta?.provider === 'freehire';
-    setSearchInfo(
-      !append && metaMessage && (showBackupNotice || !json.meta?.fallbackUsed)
-        ? metaMessage
-        : ''
-    );
+    if (!append) {
+      if (json.meta?.provider === 'freehire') {
+        setSearchInfo(
+          json.meta?.message || 'Showing results from our backup job source market.'
+        );
+      } else if (json.meta?.message) {
+        setSearchInfo(json.meta.message);
+      } else {
+        setSearchInfo('');
+      }
+    }
 
     return json;
   }
