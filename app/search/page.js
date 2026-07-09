@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import AppFooter from '@/components/app/AppFooter';
+import FormattedJobDescription from '@/components/app/FormattedJobDescription';
 import BrandLogo from '@/components/BrandLogo';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
@@ -1352,11 +1353,7 @@ function SearchPageContent() {
           background: rgba(15,23,42,0.03);
           border: 1px solid rgba(15,23,42,0.07);
           border-radius: 14px;
-          padding: 18px;
-          font-size: 14px;
-          color: #334155;
-          line-height: 1.8;
-          white-space: pre-wrap;
+          padding: 18px 20px;
           min-height: 360px;
           max-height: 62vh;
           overflow-y: auto;
@@ -2257,7 +2254,7 @@ function SearchPageContent() {
                         </div>
                       ) : (
                         <div className="job-description">
-                          {activeFullJD || 'Full job description is not available for this listing.'}
+                          <FormattedJobDescription text={activeFullJD} />
                         </div>
                       )}
 
