@@ -27,9 +27,10 @@ export async function POST(request) {
     const result = await searchJobs(body);
 
     if (!result.ok) {
+      const status = result.status && result.status !== 404 ? result.status : 503;
       return NextResponse.json(
         { error: result.error || 'Failed to fetch jobs.' },
-        { status: result.status || 502 }
+        { status: status >= 400 && status < 600 ? status : 503 }
       );
     }
 
