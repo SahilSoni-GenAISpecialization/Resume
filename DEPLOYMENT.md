@@ -162,7 +162,7 @@ Ensure billing is enabled and you have sufficient quota for production traffic.
 | `JSEARCH_API_KEY_2` | No | RapidAPI JSearch key #2 — used when key #1 quota is exhausted |
 | `FREEHIRE_API_BASE` | No | Defaults to `https://freehire.dev/api/v1` backup when both JSearch keys are exhausted |
 
-Applymatic tries **JSearch key #1**, then **JSearch key #2**, then automatically falls back to **Freehire** when both keys are exhausted or missing. Job IDs are prefixed (`jsearch:…` / `freehire:…`) so details load from the correct provider.
+Applymatic tries **JSearch key #1**, then **JSearch key #2**, then automatically falls back to **Freehire** when both keys are exhausted or missing. Mega/newer RapidAPI plans use the **`/search-v2`** endpoint (legacy `/search` is tried as fallback for older plans). Job IDs are prefixed (`jsearch:…` / `freehire:…`) so details load from the correct provider.
 
 After upgrading JSearch to a paid plan, no code changes are needed — JSearch will be used again automatically.
 

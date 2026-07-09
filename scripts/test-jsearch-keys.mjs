@@ -25,7 +25,7 @@ async function testKey(label, apiKey) {
 
   console.log(`\n${label}: ${maskKey(trimmed)}`);
 
-  const url = `https://${HOST}/search?query=network+engineer&page=1&num_pages=1`;
+  const url = `https://${HOST}/search-v2?query=network+engineer&page=1&num_pages=1&country=ca`;
 
   try {
     const response = await fetch(url, {
@@ -42,7 +42,11 @@ async function testKey(label, apiKey) {
     } catch {}
 
     const message = json?.message || json?.error || '';
-    const jobCount = Array.isArray(json?.data) ? json.data.length : 0;
+    const jobCount = Array.isArray(json?.data)
+      ? json.data.length
+      : Array.isArray(json?.data?.jobs)
+        ? json.data.jobs.length
+        : 0;
 
     if (response.ok && jobCount > 0) {
       console.log(`  ✓ OK — HTTP ${response.status}, ${jobCount} job(s) returned`);
