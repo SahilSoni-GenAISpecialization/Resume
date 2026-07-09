@@ -166,6 +166,17 @@ Applymatic tries **JSearch key #1**, then **JSearch key #2**, then automatically
 
 After upgrading JSearch to a paid plan, no code changes are needed — JSearch will be used again automatically.
 
+**Verify keys** (must be from the same RapidAPI account that is subscribed to [JSearch](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch)):
+
+```bash
+# On VPS — load env then test both keys
+cd /var/www/applymatic
+export $(grep -E '^JSEARCH_' .env.production | xargs)
+node scripts/test-jsearch-keys.mjs
+```
+
+A `403 You are not subscribed to this API` means the key does **not** belong to an account with an active JSearch subscription (wrong account, wrong API, or env not updated).
+
 ---
 
 ### 8. SMTP (contact & careers forms)
