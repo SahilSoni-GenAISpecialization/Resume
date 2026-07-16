@@ -6,7 +6,7 @@ import { FREE_RESUME_LIMIT, formatProAccessDate } from '@/lib/usage';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import AppFooter from '@/components/app/AppFooter';
-import BrandLogo from '@/components/BrandLogo';
+import AppTopBar from '@/components/app/AppTopBar';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
 import {
@@ -532,11 +532,8 @@ export default function DashboardPage() {
         body { background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         .shell { min-height: 100vh; background: radial-gradient(circle at top left, rgba(37,99,235,0.07), transparent 30%), radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%), #f8fafc; display: flex; flex-direction: column; }
 
-        .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; min-height: 148px; padding: 10px 28px; border-bottom: 1px solid rgba(15,23,42,0.07); background: rgba(255,255,255,0.9); backdrop-filter: blur(20px); }
-        .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; flex-shrink: 0; }
         .brand-mark { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, #2563eb, #7c3aed); display: flex; align-items: center; justify-content: center; }
         .brand-name { font-size: 17px; font-weight: 700; }
-        .topbar-right { display: flex; align-items: center; gap: 10px; }
         .btn-ghost { background: rgba(15,23,42,0.05); border: 1px solid rgba(15,23,42,0.1); color: #475569; padding: 9px 14px; font-size: 13px; font-weight: 600; border-radius: 9px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
         .btn-ghost:hover { background: rgba(15,23,42,0.09); color: #0f172a; }
         .btn-primary { background: #2563eb; border: none; color: white; padding: 10px 18px; font-size: 14px; font-weight: 700; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
@@ -667,43 +664,59 @@ export default function DashboardPage() {
         @media (max-width: 600px) {
           .kpi-grid { grid-template-columns: 1fr 1fr; }
           .layout { padding: 20px 16px; }
-          .topbar { padding: 14px 16px; }
           thead th:nth-child(3), tbody td:nth-child(3) { display: none; }
         }
       `}</style>
 
       <div className="shell">
-        <nav className="topbar">
-          <a href="/profile" className="brand">
-            <BrandLogo variant="nav" showName={false} />
-          </a>
-
-          <div className="topbar-right">
-            <UsageNavPill
-              supabase={supabase}
-              userId={userId}
-              usage={usage}
-              usageLoading={usageLoading}
-              className="usage-badge"
-              limitHitClassName="limit-hit"
-            />
-            {!loading && !usage.isPro && (
-              <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
-                ✨ Upgrade to Pro
+        <AppTopBar
+          brandHref="/dashboard"
+          title="Dashboard"
+          summary={
+            <>
+              <UsageNavPill
+                supabase={supabase}
+                userId={userId}
+                usage={usage}
+                usageLoading={usageLoading}
+                className="usage-badge"
+                limitHitClassName="limit-hit"
+              />
+              {!loading && !usage.isPro && (
+                <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
+                  ✨ Upgrade to Pro
+                </button>
+              )}
+            </>
+          }
+          desktopActions={
+            <>
+              {!loading && usage.isPro && (
+                <button type="button" className="btn-ghost" onClick={handleManageBilling} disabled={managingBilling}>
+                  {managingBilling ? 'Opening...' : 'Manage billing'}
+                </button>
+              )}
+              <a href="/search" className="btn-ghost">Job search</a>
+              <a href="/profile" className="btn-ghost">Profile</a>
+              <button type="button" className="btn-ghost" onClick={handleLogout}>
+                Logout
               </button>
-            )}
-            {!loading && usage.isPro && (
-              <button type="button" className="btn-ghost" onClick={handleManageBilling} disabled={managingBilling}>
-                {managingBilling ? 'Opening...' : 'Manage billing'}
-              </button>
-            )}
-            <a href="/search" className="btn-ghost">Job search</a>
-            <a href="/profile" className="btn-ghost">Profile</a>
-            <button type="button" className="btn-ghost" onClick={handleLogout}>
-              Logout
-            </button>
-          </div>
-        </nav>
+            </>
+          }
+          menuItems={[
+            ...(!loading && !usage.isPro
+              ? [{ id: 'upgrade', label: '✨ Upgrade to Pro', onClick: openUpgradeModal, variant: 'primary' }]
+              : []),
+            ...(!loading && usage.isPro
+              ? [{ id: 'billing', label: managingBilling ? 'Opening...' : 'Manage billing', onClick: handleManageBilling }]
+              : []),
+            { id: 'search', label: 'Job search', href: '/search' },
+            { id: 'profile', label: 'Profile', href: '/profile' },
+            { id: 'contact', label: 'Contact', href: '/contact' },
+            { id: 'careers', label: 'Careers', href: '/careers' },
+            { id: 'logout', label: 'Logout', onClick: handleLogout, variant: 'danger' },
+          ]}
+        />
 
         <main className="layout">
           <div className="page-header">

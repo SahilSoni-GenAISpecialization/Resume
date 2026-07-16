@@ -5,9 +5,9 @@ const LOGO_SRC = '/applymatic-logo.png';
 const LOGO_ASPECT = 3.35;
 
 export const LOGO_HEIGHTS = {
-  nav: 144,
-  footer: 128,
-  hero: 96,
+  nav: 64,
+  footer: 88,
+  hero: 72,
 } as const;
 
 export type BrandLogoVariant = keyof typeof LOGO_HEIGHTS;

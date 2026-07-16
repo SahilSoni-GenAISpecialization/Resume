@@ -27,7 +27,7 @@ import { RevealSection } from '@/components/app/profile-ui';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import AppFooter from '@/components/app/AppFooter';
-import BrandLogo from '@/components/BrandLogo';
+import AppTopBar from '@/components/app/AppTopBar';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 
@@ -233,62 +233,80 @@ export default function AppDashboardPage() {
 
   return (
     <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <nav className="app-topbar">
-        <a href="/" className="app-brand" style={{ textDecoration: 'none', color: 'inherit' }}>
-          <BrandLogo variant="nav" showName={false} />
-          <div>
-            <div className="app-brand-name">Applymatic</div>
-            <div className="app-brand-sub">{viewMode === 'search' ? 'Ready to search' : 'Profile setup'}</div>
-          </div>
-        </a>
-
-        <div className="app-topbar-right">
-          <AnimatePresence>
-            {viewMode === 'search' && (
-              <motion.div
-                className="app-profile-chip"
-                initial={{ opacity: 0, y: -12, scale: 0.92 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-              >
-                <span className="app-profile-avatar">{initials}</span>
-                <span>
-                  {profile.personal.firstName} {profile.personal.lastName}
-                </span>
-                <span style={{ color: 'var(--app-green)', fontSize: 11 }}>{'\u2713'} Saved</span>
-              </motion.div>
+      <AppTopBar
+        brandHref="/dashboard"
+        title="Applymatic"
+        subtitle={viewMode === 'search' ? 'Ready to search' : 'Profile setup'}
+        summary={
+          <>
+            <AnimatePresence>
+              {viewMode === 'search' && (
+                <motion.div
+                  className="app-profile-chip"
+                  initial={{ opacity: 0, y: -12, scale: 0.92 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ type: 'spring', stiffness: 320, damping: 26 }}
+                >
+                  <span className="app-profile-avatar">{initials}</span>
+                  <span>
+                    {profile.personal.firstName} {profile.personal.lastName}
+                  </span>
+                  <span style={{ color: 'var(--app-green)', fontSize: 11 }}>{'\u2713'} Saved</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <UsageNavPill
+              supabase={supabase}
+              userId={user?.id}
+              usage={usage}
+              usageLoading={usageLoading}
+              limitHitClassName="limit-hit"
+            />
+            {!usage.isPro && (
+              <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
+                {'\u2728'} Upgrade to Pro
+              </button>
             )}
-          </AnimatePresence>
-
-          <UsageNavPill
-            supabase={supabase}
-            userId={user?.id}
-            usage={usage}
-            usageLoading={usageLoading}
-            limitHitClassName="limit-hit"
-          />
-
-          {!usage.isPro && (
-            <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
-              {'\u2728'} Upgrade to Pro
+          </>
+        }
+        desktopActions={
+          <>
+            {viewMode === 'search' && (
+              <button type="button" className="app-btn app-btn-ghost" onClick={() => setViewMode('setup')}>
+                Edit profile
+              </button>
+            )}
+            <a href="/search" className="app-btn app-btn-ghost">
+              Job search
+            </a>
+            <a href="/dashboard" className="app-btn app-btn-ghost">
+              Dashboard
+            </a>
+            <button type="button" className="app-btn app-btn-ghost" onClick={handleLogout} disabled={isLoggingOut}>
+              {isLoggingOut ? 'Logging out...' : 'Logout'}
             </button>
-          )}
-
-          {viewMode === 'search' && (
-            <button type="button" className="app-btn app-btn-ghost" onClick={() => setViewMode('setup')}>
-              Edit profile
-            </button>
-          )}
-
-          <a href="/dashboard" className="app-btn app-btn-ghost">
-            Dashboard
-          </a>
-          <button type="button" className="app-btn app-btn-ghost" onClick={handleLogout} disabled={isLoggingOut}>
-            {isLoggingOut ? 'Logging out...' : 'Logout'}
-          </button>
-        </div>
-      </nav>
+          </>
+        }
+        menuItems={[
+          ...(!usage.isPro
+            ? [{ id: 'upgrade', label: '✨ Upgrade to Pro', onClick: openUpgradeModal, variant: 'primary' as const }]
+            : []),
+          ...(viewMode === 'search'
+            ? [{ id: 'edit-profile', label: 'Edit profile', onClick: () => setViewMode('setup') }]
+            : []),
+          { id: 'search', label: 'Job search', href: '/search' },
+          { id: 'dashboard', label: 'Dashboard', href: '/dashboard' },
+          { id: 'contact', label: 'Contact', href: '/contact' },
+          { id: 'careers', label: 'Careers', href: '/careers' },
+          {
+            id: 'logout',
+            label: isLoggingOut ? 'Logging out...' : 'Logout',
+            onClick: handleLogout,
+            variant: 'danger' as const,
+          },
+        ]}
+      />
 
       <AnimatePresence mode="wait">
         {viewMode === 'setup' ? (

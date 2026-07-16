@@ -6,8 +6,8 @@ import { createClient } from '@/lib/supabase/client';
 import UsageNavPill, { useResumeUsage } from '@/components/app/UsageNavPill';
 import { UpgradeBanner, UpgradeModal, useUpgradeFlow } from '@/components/app/Upgrade';
 import AppFooter from '@/components/app/AppFooter';
+import AppTopBar from '@/components/app/AppTopBar';
 import FormattedJobDescription from '@/components/app/FormattedJobDescription';
-import BrandLogo from '@/components/BrandLogo';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import '@/app/app.css';
 import { getApiErrorMessage, postJsonApi, readApiJson, sanitizeJobDescription, FREE_LIMIT_MESSAGE } from '@/lib/api-response';
@@ -1028,28 +1028,6 @@ function SearchPageContent() {
             radial-gradient(circle at bottom right, rgba(124,58,237,0.05), transparent 25%),
             #f8fafc;
         }
-        .topbar {
-          position: sticky;
-          top: 0;
-          z-index: 40;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          min-height: 148px;
-          padding: 10px 28px;
-          border-bottom: 1px solid rgba(15,23,42,0.07);
-          background: rgba(255,255,255,0.9);
-          backdrop-filter: blur(20px);
-        }
-        .brand { display: flex; align-items: center; gap: 14px; text-decoration: none; color: inherit; flex-shrink: 0; }
-        .brand-page-title {
-          font-size: 18px;
-          font-weight: 700;
-          letter-spacing: -0.02em;
-          color: #0f172a;
-          line-height: 1.1;
-          white-space: nowrap;
-        }
         .brand-mark {
           width: 36px;
           height: 36px;
@@ -1060,7 +1038,6 @@ function SearchPageContent() {
           justify-content: center;
         }
         .brand-name { font-size: 17px; font-weight: 700; }
-        .topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .btn-ghost, .btn-primary, .btn-secondary, .action-btn {
           border-radius: 9px;
           font-family: inherit;
@@ -1796,10 +1773,9 @@ function SearchPageContent() {
         }
         @media (max-width: 700px) {
           .layout { padding: 16px; }
-          .topbar { padding: 14px 16px; }
           .two-col, .top-search-grid, .filter-grid { grid-template-columns: 1fr; }
-          .search-actions, .action-row, .result-actions, .topbar-right { flex-direction: column; }
-          .search-actions > *, .action-row > *, .result-actions > *, .topbar-right > * { width: 100%; }
+          .search-actions, .action-row, .result-actions { flex-direction: column; }
+          .search-actions > *, .action-row > *, .result-actions > * { width: 100%; }
           .download-menu {
             left: 0;
             right: auto;
@@ -1810,32 +1786,46 @@ function SearchPageContent() {
       `}</style>
 
       <div className="shell">
-        <nav className="topbar">
-          <a href="/dashboard" className="brand">
-            <BrandLogo variant="nav" showName={false} />
-            <span className="brand-page-title">Job Search</span>
-          </a>
-
-          <div className="topbar-right">
-            <UsageNavPill
-              supabase={supabase}
-              userId={userId}
-              usage={usage}
-              usageLoading={usageLoading}
-              className="usage-badge"
-              limitHitClassName="limit-hit"
-            />
-            {!usage.isPro && (
-              <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
-                ✨ Upgrade to Pro
+        <AppTopBar
+          brandHref="/dashboard"
+          title="Job Search"
+          summary={
+            <>
+              <UsageNavPill
+                supabase={supabase}
+                userId={userId}
+                usage={usage}
+                usageLoading={usageLoading}
+                className="usage-badge"
+                limitHitClassName="limit-hit"
+              />
+              {!usage.isPro && (
+                <button type="button" className="upgrade-pill-btn" onClick={openUpgradeModal}>
+                  ✨ Upgrade to Pro
+                </button>
+              )}
+            </>
+          }
+          desktopActions={
+            <>
+              <a href="/dashboard" className="btn-ghost">Dashboard</a>
+              <a href="/profile" className="btn-ghost">Profile</a>
+              <button type="button" className="btn-ghost" onClick={handleLogout}>
+                Logout
               </button>
-            )}
-            <a href="/dashboard" className="btn-ghost">Dashboard</a>
-            <button type="button" className="btn-ghost" onClick={handleLogout}>
-              Logout
-            </button>
-</div>
-        </nav>
+            </>
+          }
+          menuItems={[
+            ...(!usage.isPro
+              ? [{ id: 'upgrade', label: '✨ Upgrade to Pro', onClick: openUpgradeModal, variant: 'primary' }]
+              : []),
+            { id: 'dashboard', label: 'Dashboard', href: '/dashboard' },
+            { id: 'profile', label: 'Profile', href: '/profile' },
+            { id: 'contact', label: 'Contact', href: '/contact' },
+            { id: 'careers', label: 'Careers', href: '/careers' },
+            { id: 'logout', label: 'Logout', onClick: handleLogout, variant: 'danger' },
+          ]}
+        />
 
         <main className="layout">
           <section className="card">
