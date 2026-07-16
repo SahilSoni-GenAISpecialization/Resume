@@ -563,7 +563,7 @@ ${cleanedJobDescription.slice(0, 8000)}`,
   matchImprovementTips: normalizedMode === 'resume' ? matchImprovementTips : '',
   jobTitle: jobTitle || null,
   company: company || null,
-  applyUrl: applyUrl || null,
+  applyUrl: safeApplyUrl,
   mode: normalizedMode,
   applicationId,
   usage: {
