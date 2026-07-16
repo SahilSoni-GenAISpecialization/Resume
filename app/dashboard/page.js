@@ -272,11 +272,24 @@ export default function DashboardPage() {
       data: { user },
     } = await supabase.auth.getUser();
 
+    const rawApplyUrl = form.apply_url.trim();
+    let safeApplyUrl = null;
+    if (rawApplyUrl) {
+      try {
+        const parsed = new URL(rawApplyUrl);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          safeApplyUrl = parsed.toString();
+        }
+      } catch {
+        safeApplyUrl = null;
+      }
+    }
+
     const payload = {
       company: form.company.trim(),
       job_title: form.job_title.trim(),
       status: toDisplayStatus(form.status),
-      apply_url: form.apply_url.trim() || null,
+      apply_url: safeApplyUrl,
       notes: form.notes.trim() || null,
     };
 
@@ -956,7 +969,7 @@ export default function DashboardPage() {
                       <tr key={app.id}>
                         <td>
                           <div className="td-company">{app.company}</div>
-                          {app.apply_url && (
+                          {app.apply_url && /^https?:\/\//i.test(app.apply_url) && (
                             <a href={app.apply_url} target="_blank" rel="noopener noreferrer" className="apply-link">
                               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />

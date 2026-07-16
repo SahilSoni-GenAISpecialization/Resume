@@ -9,9 +9,22 @@ import {
   AlignmentType,
   BorderStyle,
 } from 'docx';
+import { createClient } from '@/lib/supabase/server';
+
+const MAX_CONTENT_CHARS = 200_000;
 
 export async function POST(request) {
   try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const contentType = request.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
       return NextResponse.json(
@@ -25,6 +38,13 @@ export async function POST(request) {
 
     if (!content || typeof content !== 'string' || !content.trim()) {
       return NextResponse.json({ error: 'Content is required.' }, { status: 400 });
+    }
+
+    if (content.length > MAX_CONTENT_CHARS) {
+      return NextResponse.json(
+        { error: 'Document content is too large to export.' },
+        { status: 413 }
+      );
     }
 
     if (!format || !['pdf', 'docx'].includes(format)) {
@@ -61,7 +81,7 @@ export async function POST(request) {
   } catch (err) {
     console.error('EXPORT DOCUMENT ERROR:', err);
     return NextResponse.json(
-      { error: err.message || 'Failed to export document.' },
+      { error: 'Failed to export document.' },
       { status: 500 }
     );
   }

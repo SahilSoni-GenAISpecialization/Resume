@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClaudeJson, createClaudeText, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
 import { createClient } from '@/lib/supabase/server';
-import { sanitizeJobDescription } from '@/lib/api-response';
+import { isSafeHttpUrl, sanitizeJobDescription } from '@/lib/api-response';
 import { filterAddressedSuggestions } from '@/lib/profile-data';
 import { applyMatchScoreAdjustments, filterMatchAnalysis } from '@/lib/match-scoring';
 import { loadUserProfileBundle } from '@/lib/server-profile';
@@ -70,6 +70,8 @@ export async function POST(request) {
         : mode === 'match_only'
           ? 'match_only'
           : 'resume';
+
+    const safeApplyUrl = isSafeHttpUrl(applyUrl) ? String(applyUrl).trim() : null;
 
     const profileBundle = await loadUserProfileBundle(supabase, user.id, user.email);
     if (!profileBundle) {
@@ -307,7 +309,7 @@ Rules:
         matchImprovementTips,
         jobTitle: jobTitle || null,
         company: company || null,
-        applyUrl: applyUrl || null,
+        applyUrl: safeApplyUrl,
         mode: 'match_only',
         applicationId: existing?.id || null,
         usage: {
@@ -480,7 +482,7 @@ ${cleanedJobDescription.slice(0, 8000)}`,
       job_title: jobTitle || 'Unknown',
       company: company || 'Unknown',
       job_description: cleanedJobDescription,
-      apply_url: applyUrl || null,
+      apply_url: safeApplyUrl,
     };
 
     const safeCompany = insertPayload.company;
@@ -501,7 +503,7 @@ ${cleanedJobDescription.slice(0, 8000)}`,
     if (existing) {
       const updatePayload = {
         job_description: cleanedJobDescription,
-        apply_url: applyUrl || undefined,
+        apply_url: safeApplyUrl || undefined,
         status: insertPayload.status,
       };
 

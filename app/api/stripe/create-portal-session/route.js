@@ -68,7 +68,7 @@ export async function POST(request) {
 
     console.error('STRIPE PORTAL SESSION ERROR:', err);
     return NextResponse.json(
-      { error: err.message || 'Could not open billing portal.' },
+      { error: 'Could not open billing portal.' },
       { status: 500 }
     );
   }
