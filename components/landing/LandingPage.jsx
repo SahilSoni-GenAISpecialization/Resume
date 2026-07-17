@@ -18,7 +18,7 @@ export default function LandingPage() {
   const scrollTo = (id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    const navOffset = window.innerWidth <= 768 ? 72 : 88;
+    const navOffset = window.innerWidth < 1025 ? 72 : 88;
     const top = el.getBoundingClientRect().top + window.scrollY - navOffset;
     window.scrollTo({ top, behavior: 'smooth' });
   };

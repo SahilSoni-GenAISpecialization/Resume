@@ -31,7 +31,7 @@ export default function Navbar({ scrollTo }) {
 
   useEffect(() => {
     function handleResize() {
-      if (window.innerWidth > 768) setMenuOpen(false);
+      if (window.innerWidth >= 1025) setMenuOpen(false);
     }
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -50,7 +50,7 @@ export default function Navbar({ scrollTo }) {
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       >
-        <a href="/" className="lp-logo">
+        <a href="/" className="lp-logo" aria-label="Applymatic home">
           <BrandLogo variant="nav" showName={false} />
         </a>
 
@@ -107,10 +107,13 @@ export default function Navbar({ scrollTo }) {
             />
             <motion.div
               className="lp-mobile-menu"
-              initial={{ opacity: 0, y: -12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Site menu"
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
               <div className="lp-mobile-menu-links">
                 {NAV_ITEMS.map(([label, id]) => (
