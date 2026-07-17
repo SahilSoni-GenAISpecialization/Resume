@@ -16,7 +16,7 @@
     "framer-motion": "^12.42.0",
     "jspdf": "^4.2.1",
     "mammoth": "^1.12.0",
-    "next": "16.2.6",
+    "next": "16.2.10",
     "nodemailer": "^9.0.3",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
@@ -32,8 +32,11 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
   }
 }

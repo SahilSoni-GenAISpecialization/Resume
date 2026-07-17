@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClaudeJson, getUserFacingAiError, isAiConfigured } from '@/lib/anthropic';
+import { createClient } from '@/lib/supabase/server';
+
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 const SYSTEM_PROMPT = `Extract resume data and return ONLY valid JSON with these exact keys:
 {
@@ -48,6 +51,16 @@ function normalizeExtractedText(text) {
 
 export async function POST(request) {
   try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     if (!isAiConfigured()) {
       console.error('PARSE RESUME ERROR: ANTHROPIC_API_KEY is not set on the server');
       return NextResponse.json({ error: getUserFacingAiError() }, { status: 503 });
@@ -56,11 +69,24 @@ export async function POST(request) {
     const formData = await request.formData();
     const file = formData.get('file');
 
-    if (!file) {
+    if (!file || typeof file === 'string') {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
+    if (typeof file.size === 'number' && file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: 'File too large. Maximum upload size is 5MB.' },
+        { status: 413 }
+      );
+    }
+
     const bytes = await file.arrayBuffer();
+    if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: 'File too large. Maximum upload size is 5MB.' },
+        { status: 413 }
+      );
+    }
     const buffer = Buffer.from(bytes);
 
     const isPdf =

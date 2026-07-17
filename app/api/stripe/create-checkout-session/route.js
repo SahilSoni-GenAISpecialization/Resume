@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sanitizeReturnPath } from '@/lib/api-response';
 import { createClient } from '@/lib/supabase/server';
 import { COMPANY_NAME } from '@/lib/site-config';
 import { getProPriceId, getSiteUrl, getStripe } from '@/lib/stripe';
@@ -28,9 +29,7 @@ export async function POST(request) {
     let returnPath = '/dashboard';
     try {
       const body = await request.json();
-      if (body?.returnPath && typeof body.returnPath === 'string' && body.returnPath.startsWith('/')) {
-        returnPath = body.returnPath;
-      }
+      returnPath = sanitizeReturnPath(body?.returnPath, '/dashboard');
     } catch {}
 
     const customerId = await resolveStripeCustomerId(
@@ -66,7 +65,7 @@ export async function POST(request) {
   } catch (err) {
     console.error('STRIPE CHECKOUT SESSION ERROR:', err);
     return NextResponse.json(
-      { error: err.message || 'Could not start checkout.' },
+      { error: 'Could not start checkout.' },
       { status: 500 }
     );
   }

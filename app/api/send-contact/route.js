@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { sanitizeFreeText } from '@/lib/api-response';
+import { escapeHtml, sanitizeFreeText } from '@/lib/api-response';
 import { CONTACT_EMAIL } from '@/lib/site-config';
 import { getEmailConfigError, isEmailConfigured, sendEmail } from '@/lib/send-email';
 
@@ -8,14 +8,12 @@ export const dynamic = 'force-dynamic';
 export async function POST(request) {
   try {
     if (!isEmailConfigured()) {
-      const configError = getEmailConfigError();
-      console.error('SEND CONTACT ERROR:', configError);
+      console.error('SEND CONTACT ERROR:', getEmailConfigError());
       return NextResponse.json(
         {
           error:
             'Contact email is temporarily unavailable. Please email us directly at info@applymatic.ca or try again later.',
           code: 'SMTP_NOT_CONFIGURED',
-          detail: configError,
         },
         { status: 503 }
       );
@@ -55,7 +53,7 @@ export async function POST(request) {
       replyTo: email,
       subject: mailSubject,
       text,
-      html: text.replace(/\n/g, '<br>'),
+      html: escapeHtml(text).replace(/\n/g, '<br>'),
     });
 
     try {
@@ -77,15 +75,10 @@ export async function POST(request) {
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('SEND CONTACT ERROR:', err?.message || err);
-    const smtpHint =
-      err?.code === 'EAUTH'
-        ? 'SMTP authentication failed — check SMTP_USER and SMTP_PASS.'
-        : err?.code === 'ECONNECTION' || err?.code === 'ETIMEDOUT'
-          ? 'Could not connect to the mail server — check SMTP_HOST and SMTP_PORT.'
-          : null;
     return NextResponse.json(
       {
-        error: smtpHint || 'Could not send your message. Please try again later or email info@applymatic.ca directly.',
+        error:
+          'Could not send your message. Please try again later or email info@applymatic.ca directly.',
       },
       { status: 500 }
     );

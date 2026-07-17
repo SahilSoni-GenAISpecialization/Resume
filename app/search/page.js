@@ -655,19 +655,30 @@ function SearchPageContent() {
   async function handleApplyNow(url) {
     if (!url) return;
 
+    let safeUrl = null;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        safeUrl = parsed.toString();
+      }
+    } catch {
+      safeUrl = null;
+    }
+    if (!safeUrl) return;
+
     try {
       await upsertApplication({
         status: 'Applied',
         company: getResolvedCompany(),
         jobTitle: getResolvedTitle(),
-        applyUrl: url,
+        applyUrl: safeUrl,
         markApplied: true,
       });
 
-      window.open(url, '_blank', 'noopener,noreferrer');
+      window.open(safeUrl, '_blank', 'noopener,noreferrer');
     } catch (err) {
       console.error('Apply tracking failed:', err);
-      window.open(url, '_blank', 'noopener,noreferrer');
+      window.open(safeUrl, '_blank', 'noopener,noreferrer');
     }
   }
 
